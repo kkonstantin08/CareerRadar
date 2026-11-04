@@ -702,7 +702,7 @@ func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
 	defer db.Close()
 	link := fmt.Sprintf("https://remotive.com/remote-jobs/test-%d", time.Now().UnixNano())
 	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, link)
-	result := discovery.Result{Title: "Go Engineer", Company: "Example", URL: link, Source: "Remotive", Location: "Worldwide"}
+	result := discovery.Result{Title: "Go Engineer", Company: "Example", URL: link, Source: "Remotive", Location: "Worldwide", Description: "Build APIs in Go"}
 	for i := 0; i < 2; i++ {
 		if err = db.SaveDiscovered(ctx, []discovery.Result{result}); err != nil {
 			t.Fatal(err)
@@ -716,7 +716,7 @@ func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
 	for _, j := range xs {
 		if j.URL == link {
 			n++
-			if j.WorkMode != "remote" || j.Location != "Worldwide" {
+			if j.WorkMode != "remote" || j.Location != "Worldwide" || j.Description != "Build APIs in Go" {
 				t.Fatalf("job %+v", j)
 			}
 		}

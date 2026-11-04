@@ -23,7 +23,7 @@ func (s *Store) SaveDiscovered(ctx context.Context, results []discovery.Result) 
 		return err
 	}
 	for _, r := range results {
-		_, err = s.Observe(ctx, Observation{SourceID: src.ID, PageURL: r.URL, URL: r.URL, Title: r.Title, Company: r.Company, Location: r.Location, Description: "Remotive: " + r.URL + "\nCandidate location: " + r.Location, WorkMode: "remote"})
+		_, err = s.Observe(ctx, Observation{SourceID: src.ID, PageURL: r.URL, URL: r.URL, Title: r.Title, Company: r.Company, Location: r.Location, Description: r.Description, WorkMode: "remote"})
 		if err != nil {
 			return err
 		}
