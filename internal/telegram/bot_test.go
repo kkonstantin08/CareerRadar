@@ -1,0 +1,112 @@
+package telegram
+
+import (
+	"context"
+	"github.com/kkonstantin08/CareerRadar/internal/jobs"
+	"github.com/kkonstantin08/CareerRadar/internal/store"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+type fakeLinks struct {
+	linked int64
+	code   string
+}
+
+func (f *fakeLinks) LinkTelegram(_ context.Context, code string, id int64) error {
+	f.linked = id
+	f.code = code
+	return nil
+}
+func (f *fakeLinks) TelegramChat(context.Context) (int64, error) { return f.linked, nil }
+
+func TestLinkOnlyPrivateChatAndOwner(t *testing.T) {
+	f := &fakeLinks{}
+	b := Bot{links: f}
+	if got := b.Handle(context.Background(), Message{ChatID: 100, UserID: 5, ChatType: "group", Text: "/start secret"}); got != "" || f.linked != 0 {
+		t.Fatal("linked a group")
+	}
+	if got := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/start secret"}); !strings.Contains(got, "подключён") || f.linked != 5 {
+		t.Fatalf("link response %q", got)
+	}
+	if got := b.Handle(context.Background(), Message{ChatID: 6, UserID: 6, ChatType: "private", Text: "/help"}); got != "" {
+		t.Fatalf("responded to another user: %q", got)
+	}
+}
+
+func TestPollHandlesPrivateLinkMessage(t *testing.T) {
+	f := &fakeLinks{}
+	b := New(f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sent := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/botTEST/getUpdates":
+			_, _ = io.WriteString(w, `{"ok":true,"result":[{"update_id":1,"message":{"chat":{"id":5,"type":"private"},"from":{"id":5},"text":"/start secret"}}]}`)
+		case "/botTEST/sendMessage":
+			sent = true
+			_, _ = io.WriteString(w, `{"ok":true,"result":{}}`)
+			cancel()
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	b.poll(ctx, srv.Client(), srv.URL, "TEST")
+	if !sent || f.linked != 5 {
+		t.Fatalf("sent=%v linked=%d", sent, f.linked)
+	}
+}
+
+func TestSendRequiresTelegramConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{{`{"ok":true}`, true}, {`{"ok":false}`, false}, {`garbled`, false}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, tc.body) }))
+		got := send(context.Background(), srv.Client(), srv.URL, "TEST", 5, "hello")
+		srv.Close()
+		if got != tc.want {
+			t.Fatalf("%s: %t", tc.body, got)
+		}
+	}
+}
+
+type fakeData struct {
+	fakeLinks
+	status string
+}
+
+func (f *fakeData) Jobs(context.Context) ([]store.Job, error) {
+	return []store.Job{{ID: 7, Observation: store.Observation{Title: "Go Intern", URL: "https://example.org/job"}, Status: "Не откликался"}}, nil
+}
+func (f *fakeData) Sources(context.Context) ([]store.Source, error) { return nil, nil }
+func (f *fakeData) SetStatus(_ context.Context, _ int64, status string) error {
+	f.status = status
+	return nil
+}
+func (f *fakeData) AddSource(_ context.Context, name, url string, enabled bool) (store.Source, error) {
+	return store.Source{Name: name, URL: url, Enabled: enabled}, nil
+}
+func (f *fakeData) UpdateSource(context.Context, int64, string, string, bool) error { return nil }
+
+func TestOwnerCanViewJobsAndChangeStatus(t *testing.T) {
+	f := &fakeData{}
+	f.linked = 5
+	b := New(f)
+	if got := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"}); !strings.Contains(got, "Go Intern") {
+		t.Fatalf("jobs %q", got)
+	}
+	got := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/status 7 2"})
+	if f.status != "Откликнулся" {
+		t.Fatalf("status %q: %s", f.status, got)
+	}
+}
+
+func (f *fakeData) Preferences(context.Context) (jobs.Preferences, error) {
+	return jobs.Preferences{}, nil
+}

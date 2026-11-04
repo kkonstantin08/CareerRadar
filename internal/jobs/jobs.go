@@ -8,13 +8,27 @@ type Job struct {
 	Level     string
 	Direction string
 	Location  string
+	Type      string
+	Language  string
+	Company   string
+	WorkMode  string
+	Hours     *int
+	Salary    *int64
+	Currency  string
 }
 
 // Preferences restrict explicitly known opportunity attributes.
 type Preferences struct {
-	Levels     []string
-	Directions []string
-	Locations  []string
+	Levels     []string `json:"levels"`
+	Directions []string `json:"directions"`
+	Locations  []string `json:"locations"`
+	Types      []string `json:"types"`
+	Languages  []string `json:"languages"`
+	Companies  []string `json:"companies"`
+	WorkModes  []string `json:"work_modes"`
+	MaxHours   *int     `json:"max_hours"`
+	MinSalary  *int64   `json:"min_salary"`
+	Currency   string   `json:"currency"`
 }
 
 // Match describes whether an opportunity satisfies known preferences.
@@ -33,7 +47,7 @@ func (p Preferences) Match(j Job) Match {
 		value   string
 		allowed []string
 	}{
-		{j.Level, p.Levels}, {j.Direction, p.Directions}, {j.Location, p.Locations},
+		{j.Level, p.Levels}, {j.Direction, p.Directions}, {j.Location, p.Locations}, {j.Type, p.Types}, {j.Language, p.Languages}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
 	} {
 		if len(field.allowed) == 0 {
 			continue
@@ -50,6 +64,20 @@ func (p Preferences) Match(j Job) Match {
 			}
 		}
 		if !found {
+			return Unsuitable
+		}
+	}
+	if p.MaxHours != nil {
+		if j.Hours == nil {
+			unknown = true
+		} else if *j.Hours > *p.MaxHours {
+			return Unsuitable
+		}
+	}
+	if p.MinSalary != nil {
+		if j.Salary == nil || j.Currency == "" || p.Currency == "" || !strings.EqualFold(j.Currency, p.Currency) {
+			unknown = true
+		} else if *j.Salary < *p.MinSalary {
 			return Unsuitable
 		}
 	}

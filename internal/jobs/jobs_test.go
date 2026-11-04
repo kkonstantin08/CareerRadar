@@ -23,3 +23,24 @@ func TestMatchPreservesUnknownAndRejectsExplicitMismatch(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchNumericAndMultiplePreferences(t *testing.T) {
+	max := 30
+	salary := int64(60000)
+	p := Preferences{Levels: []string{"Intern", "Junior"}, Languages: []string{"Go", "Python"}, WorkModes: []string{"remote"}, MaxHours: &max, MinSalary: &salary, Currency: "RUB"}
+	hours := 20
+	pay := int64(80000)
+	good := Job{Level: "Junior", Language: "Go", WorkMode: "remote", Hours: &hours, Salary: &pay, Currency: "RUB"}
+	if p.Match(good) != Suitable {
+		t.Fatal("expected suitable")
+	}
+	hours = 40
+	if p.Match(good) != Unsuitable {
+		t.Fatal("hours mismatch accepted")
+	}
+	hours = 20
+	good.Salary = nil
+	if p.Match(good) != NeedsClarification {
+		t.Fatal("missing pay must remain unknown")
+	}
+}

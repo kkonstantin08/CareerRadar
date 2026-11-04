@@ -17,6 +17,10 @@ type Job struct {
 	Deadline    string
 	URL         string
 	SourceURL   string
+	Location    string
+	WorkMode    string
+	Type        string
+	Level       string
 }
 
 // Parse extracts schema.org JobPosting records from HTML without inferring facts.
@@ -46,7 +50,21 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if org, ok := v["hiringOrganization"].(map[string]any); ok {
 				company, _ = org["name"].(string)
 			}
-			result = append(result, Job{Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
+			location, mode := "", ""
+			if place, ok := v["jobLocation"].(map[string]any); ok {
+				if addr, ok := place["address"].(map[string]any); ok {
+					location, _ = addr["addressLocality"].(string)
+				}
+			}
+			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {
+				mode = "remote"
+			}
+			offerType, level := "", ""
+			if strings.EqualFold(str("employmentType"), "INTERN") {
+				offerType = "Internship"
+				level = "Intern"
+			}
+			result = append(result, Job{Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)
