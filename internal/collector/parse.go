@@ -15,24 +15,25 @@ import (
 
 // Job is a structured opportunity and the page on which it was observed.
 type Job struct {
-	Closed      bool
-	Title       string
-	Company     string
-	Description string
-	Deadline    string
-	URL         string
-	SourceURL   string
-	Location    string
-	WorkMode    string
-	Type        string
-	Level       string
-	Direction   string
-	Language    string
-	Hours       *int
-	Salary      *int64
-	SalaryMin   *int64
-	SalaryMax   *int64
-	Currency    string
+	Closed            bool
+	Title             string
+	Company           string
+	Description       string
+	Deadline          string
+	URL               string
+	SourceURL         string
+	Location          string
+	LocationUncertain bool
+	WorkMode          string
+	Type              string
+	Level             string
+	Direction         string
+	Language          string
+	Hours             *int
+	Salary            *int64
+	SalaryMin         *int64
+	SalaryMax         *int64
+	Currency          string
 }
 
 var weeklyHours = regexp.MustCompile(`(?i)^\s*(\d{1,3})\s*(?:hours? per week|hours? a week|час(?:ов|а)? в неделю)\s*$`)

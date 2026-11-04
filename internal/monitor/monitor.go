@@ -203,7 +203,7 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 			problem = "Job URL is missing or invalid"
 			continue
 		}
-		_, err = s.db.Observe(ctx, store.Observation{SourceID: src.ID, PageURL: job.SourceURL, URL: jobURL, Title: job.Title, Company: job.Company, Description: job.Description, Deadline: job.Deadline, Location: job.Location, WorkMode: job.WorkMode, Type: job.Type, Level: job.Level, Direction: job.Direction, Language: job.Language, Hours: job.Hours, Salary: job.Salary, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax, Currency: job.Currency})
+		_, err = s.db.Observe(ctx, store.Observation{SourceID: src.ID, PageURL: job.SourceURL, URL: jobURL, Title: job.Title, Company: job.Company, Description: job.Description, Deadline: job.Deadline, Location: job.Location, LocationUncertain: job.LocationUncertain, WorkMode: job.WorkMode, Type: job.Type, Level: job.Level, Direction: job.Direction, Language: job.Language, Hours: job.Hours, Salary: job.Salary, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax, Currency: job.Currency})
 		if err != nil {
 			if errors.Is(err, store.ErrDuplicateJobicy) {
 				problem = err.Error()

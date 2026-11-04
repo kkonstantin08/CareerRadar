@@ -10,7 +10,7 @@ A work-in-progress personal IT opportunity tracker built with Go and PostgreSQL.
 
 - Add, confirm, disable, edit and remove monitored source URLs through the API; import `name,url` CSV files or the `company,start_url` columns of the `SOURCES` sheet without activating imported sources.
 - Search Wikidata for candidate company websites and propose career links for confirmation. Search public Remotive listings with attribution.
-- Read schema.org `JobPosting` JSON-LD, including relative job URLs; follow a bounded number of relevant same-host HTML links and pagination links, and use the public Greenhouse and Ashby job board APIs.
+- Read schema.org `JobPosting` JSON-LD, including relative job URLs; follow a bounded number of relevant same-host HTML links and pagination links, and use the public Greenhouse and Ashby job board APIs. Explicit single locations for on-site and hybrid Ashby jobs are used; ambiguous geography remains for clarification.
 - Preserve observed facts when a later observation is incomplete; retain source evidence and change snapshots, and distinguish source errors from confirmed closure.
 - Schedule enabled-source checks at 08:00 Europe/Moscow with up to two checks concurrently. Missed runs are not backfilled.
 - View jobs, source health and check history in a Russian web interface; change application status and preferences. The current collector extracts only some fields used by filters.

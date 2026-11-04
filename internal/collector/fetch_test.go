@@ -76,6 +76,18 @@ func TestAshbyIncompleteListingsPreserveValidJobs(t *testing.T) {
 	}
 }
 
+func TestAshbyLocationDoesNotGuessRemoteOrMultipleLocations(t *testing.T) {
+	body := `{"jobs":[
+		{"title":"Office","isListed":true,"workplaceType":"OnSite","secondaryLocations":[],"address":{"postalAddress":{"addressLocality":"Казань"}},"jobUrl":"https://jobs.ashbyhq.com/example/1"},
+		{"title":"Remote","isListed":true,"workplaceType":"Remote","address":{"postalAddress":{"addressLocality":"Москва"}},"jobUrl":"https://jobs.ashbyhq.com/example/2"},
+		{"title":"Multiple","isListed":true,"workplaceType":"Hybrid","address":{"postalAddress":{"addressLocality":"Москва"}},"secondaryLocations":[{"location":"Казань"}],"jobUrl":"https://jobs.ashbyhq.com/example/3"},
+		{"title":"Unknown","isListed":true,"workplaceType":"OnSite","address":{"postalAddress":{"addressLocality":"Москва"}},"jobUrl":"https://jobs.ashbyhq.com/example/4"}]}`
+	got, err := parseAshby([]byte(body), "https://jobs.ashbyhq.com/example")
+	if err != nil || len(got) != 4 || got[0].Location != "Казань" || got[1].Location != "" || got[2].Location != "" || !got[2].LocationUncertain || got[3].Location != "" || got[3].LocationUncertain {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
 func TestAshbySupportsBoundedLargerBoard(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		body := `{"jobs":[{"title":"Engineer","isListed":true,"descriptionPlain":"` + strings.Repeat("x", (2<<20)+1) + `","jobUrl":"https://jobs.ashbyhq.com/example/1"}]}`

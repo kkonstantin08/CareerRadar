@@ -34,24 +34,25 @@ type Source struct {
 
 // Observation records facts published at a job URL.
 type Observation struct {
-	SourceID    int64  `json:"source_id"`
-	PageURL     string `json:"page_url"`
-	URL         string `json:"url"`
-	Title       string `json:"title"`
-	Company     string `json:"company"`
-	Description string `json:"description"`
-	Deadline    string `json:"deadline"`
-	Location    string `json:"location"`
-	WorkMode    string `json:"work_mode"`
-	Type        string `json:"type"`
-	Level       string `json:"level"`
-	Direction   string `json:"direction"`
-	Language    string `json:"language"`
-	Hours       *int   `json:"hours"`
-	Salary      *int64 `json:"salary"`
-	SalaryMin   *int64 `json:"salary_min"`
-	SalaryMax   *int64 `json:"salary_max"`
-	Currency    string `json:"currency"`
+	SourceID          int64  `json:"source_id"`
+	PageURL           string `json:"page_url"`
+	URL               string `json:"url"`
+	Title             string `json:"title"`
+	Company           string `json:"company"`
+	Description       string `json:"description"`
+	Deadline          string `json:"deadline"`
+	Location          string `json:"location"`
+	LocationUncertain bool   `json:"-"`
+	WorkMode          string `json:"work_mode"`
+	Type              string `json:"type"`
+	Level             string `json:"level"`
+	Direction         string `json:"direction"`
+	Language          string `json:"language"`
+	Hours             *int   `json:"hours"`
+	Salary            *int64 `json:"salary"`
+	SalaryMin         *int64 `json:"salary_min"`
+	SalaryMax         *int64 `json:"salary_max"`
+	Currency          string `json:"currency"`
 }
 
 // Job includes a persisted observation and its application status.
@@ -189,10 +190,13 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	if x.Level == "" && (x.Title == "" || x.Title == old.Title || old.Level == "Intern" && old.Type == "Internship" && (x.Type == "" || x.Type == "Internship")) {
 		x.Level = old.Level
 	}
+	if x.Location == "" && !x.LocationUncertain && !(x.WorkMode == "remote" && old.WorkMode != "" && old.WorkMode != "remote") {
+		x.Location = old.Location
+	}
 	for _, pair := range []struct {
 		current  *string
 		previous string
-	}{{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description}, {&x.Deadline, old.Deadline}, {&x.Location, old.Location}, {&x.WorkMode, old.WorkMode}, {&x.Type, old.Type}, {&x.Direction, old.Direction}, {&x.Language, old.Language}} {
+	}{{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description}, {&x.Deadline, old.Deadline}, {&x.WorkMode, old.WorkMode}, {&x.Type, old.Type}, {&x.Direction, old.Direction}, {&x.Language, old.Language}} {
 		if *pair.current == "" {
 			*pair.current = pair.previous
 		}

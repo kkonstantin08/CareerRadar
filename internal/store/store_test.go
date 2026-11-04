@@ -972,6 +972,51 @@ func TestChangedTitleRetainsExplicitInternship(t *testing.T) {
 	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
 }
 
+func TestExplicitlyUncertainLocationDoesNotKeepStaleCity(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://location-change.example/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Location", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Engineer", Location: "Москва"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Engineer", LocationUncertain: true}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	var location string
+	if err = db.db.QueryRowContext(ctx, `SELECT id,location FROM jobs WHERE url=$1`, base).Scan(&id, &location); err != nil || location != "" {
+		t.Fatalf("location %q %v", location, err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
+	details, err := db.Details(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := false
+	for _, revision := range details.History {
+		if strings.Contains(string(revision.Snapshot), "Москва") {
+			previous = true
+		}
+	}
+	if !previous {
+		t.Fatal("previous city absent from history")
+	}
+}
+
 func TestSalaryRangePersistenceAndIncompleteRecheck(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

@@ -32,6 +32,13 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 			Workplace   string `json:"workplaceType"`
 			Employment  string `json:"employmentType"`
 			Listed      *bool  `json:"isListed"`
+			Address     struct {
+				PostalAddress struct {
+					City    string `json:"addressLocality"`
+					Country string `json:"addressCountry"`
+				} `json:"postalAddress"`
+			} `json:"address"`
+			Secondary []json.RawMessage `json:"secondaryLocations"`
 		} `json:"jobs"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil || data.Jobs == nil {
@@ -56,6 +63,7 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 			continue
 		}
 		j := Job{Title: item.Title, Description: item.Description, URL: item.URL, SourceURL: source}
+		j.LocationUncertain = item.Secondary != nil && len(item.Secondary) > 0
 		switch item.Workplace {
 		case "Remote":
 			j.WorkMode = "remote"
@@ -63,6 +71,13 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 			j.WorkMode = "hybrid"
 		case "OnSite":
 			j.WorkMode = "office"
+		}
+		// A remote or multi-location posting does not establish one eligible city.
+		if (j.WorkMode == "office" || j.WorkMode == "hybrid") && item.Secondary != nil && len(item.Secondary) == 0 {
+			j.Location = item.Address.PostalAddress.City
+			if strings.TrimSpace(j.Location) == "" {
+				j.Location = item.Address.PostalAddress.Country
+			}
 		}
 		if item.Employment == "Intern" {
 			j.Type = "Internship"
