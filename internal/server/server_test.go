@@ -696,3 +696,37 @@ func TestUncertainNotificationResolutionAPI(t *testing.T) {
 		t.Fatalf("resolve %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestCatalogFiltersExplicitDirectionAndLanguage(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://skills-api.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Skills", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	for _, x := range []store.Observation{{SourceID: src.ID, URL: base + "/go", Direction: "Backend", Language: "Go"}, {SourceID: src.ID, URL: base + "/java", Direction: "Backend", Language: "Java"}} {
+		if _, err = db.Observe(ctx, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.SavePreferences(ctx, jobs.Preferences{Directions: []string{"Backend"}, Languages: []string{"Go"}}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), base+"/go") || strings.Contains(w.Body.String(), base+"/java") {
+		t.Fatalf("catalog %d %s", w.Code, w.Body.String())
+	}
+}

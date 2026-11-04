@@ -161,3 +161,26 @@ func TestUpdateIsNotAcknowledgedBeforeCommand(t *testing.T) {
 		t.Fatal("update claimed before command execution")
 	}
 }
+
+type atomicStatusLinks struct {
+	fakeLinks
+	invoked bool
+	update  int64
+	status  string
+}
+
+func (f *atomicStatusLinks) ApplyTelegramStatus(_ context.Context, update, chat, job int64, status string) (bool, error) {
+	f.invoked = true
+	f.update = update
+	f.status = status
+	return true, nil
+}
+func TestStatusUpdateUsesAtomicStore(t *testing.T) {
+	f := &atomicStatusLinks{}
+	f.linked = 5
+	b := New(f)
+	handled, reply, err := b.atomicStatus(context.Background(), 42, Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/status 7 2"})
+	if err != nil || !handled || !f.invoked || f.update != 42 || f.status != "Откликнулся" || reply == "" {
+		t.Fatalf("atomic %v %q %v %+v", handled, reply, err, f)
+	}
+}

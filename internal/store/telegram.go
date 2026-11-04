@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 )
@@ -83,4 +84,51 @@ func (s *Store) TelegramUpdateProcessed(ctx context.Context, id int64) (bool, er
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM telegram_updates WHERE update_id=$1)`, id).Scan(&exists)
 	return exists, err
+}
+
+// ApplyTelegramStatus atomically applies a status change and records its update ID.
+func (s *Store) ApplyTelegramStatus(ctx context.Context, updateID, chatID, jobID int64, status string) (bool, error) {
+	switch status {
+	case "Не откликался", "Откликнулся", "Тестовое", "Собеседование", "Оффер", "Отказ":
+	default:
+		return false, errors.New("invalid status")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var owner int64
+	if err = tx.QueryRowContext(ctx, `SELECT chat_id FROM telegram_link WHERE singleton=true`).Scan(&owner); err != nil {
+		return false, err
+	}
+	if owner != chatID {
+		return false, errors.New("unauthorized chat")
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO telegram_updates(update_id) VALUES($1) ON CONFLICT DO NOTHING`, updateID)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, tx.Commit()
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE jobs SET status=$2 WHERE id=$1`, jobID, status)
+	if err != nil {
+		return false, err
+	}
+	n, err = result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, sql.ErrNoRows
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }

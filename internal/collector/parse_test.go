@@ -56,3 +56,40 @@ func TestParseExplicitMonthlySalaryAndWeeklyHours(t *testing.T) {
 		t.Fatalf("fields: %+v", got[0])
 	}
 }
+
+func TestParseExplicitSkillAndOccupation(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","occupationalCategory":"Backend","skills":["Go"]}</script>`
+	found, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(found) != 1 {
+		t.Fatalf("jobs %+v %v", found, err)
+	}
+	if found[0].Direction != "Backend" || found[0].Language != "Go" {
+		t.Fatalf("job %+v", found[0])
+	}
+}
+
+func TestUnknownOccupationalCodeAndSkillAreNotInvented(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","occupationalCategory":"15-1252","skills":["teamwork"]}</script>`
+	found, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(found) != 1 {
+		t.Fatalf("jobs %+v %v", found, err)
+	}
+	if found[0].Direction != "" || found[0].Language != "" {
+		t.Fatalf("unrecognized fields: %+v", found[0])
+	}
+}
+
+func TestSkillsExtractOneLanguageAmongOtherSkills(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","skills":["Docker","Go","PostgreSQL"]}</script>`
+	found, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(found) != 1 || found[0].Language != "Go" {
+		t.Fatalf("jobs %+v %v", found, err)
+	}
+}
+func TestMultipleLanguagesRemainUnknown(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","skills":["Go","Python"]}</script>`
+	found, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(found) != 1 || found[0].Language != "" {
+		t.Fatalf("jobs %+v %v", found, err)
+	}
+}

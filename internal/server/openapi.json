@@ -80,6 +80,12 @@
           },
           "closed": {
             "type": "boolean"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
           }
         }
       }

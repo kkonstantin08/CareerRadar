@@ -24,6 +24,8 @@ type Job struct {
 	WorkMode    string
 	Type        string
 	Level       string
+	Direction   string
+	Language    string
 	Hours       *int
 	Salary      *int64
 	Currency    string
@@ -92,7 +94,27 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 					}
 				}
 			}
-			result = append(result, Job{Hours: hours, Salary: salary, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
+			direction := recognized(str("occupationalCategory"), []string{"Backend", "Frontend", "Fullstack", "AI/ML/DS", "Data Engineering", "DevOps", "QA Automation"})
+			language := ""
+			values, ok := v["skills"].([]any)
+			if !ok {
+				if value, ok := v["skills"].(string); ok {
+					values = []any{value}
+				}
+			}
+			for _, value := range values {
+				raw, _ := value.(string)
+				found := recognized(raw, []string{"Go", "Python", "Java", "JavaScript", "TypeScript", "C++", "C#", "Rust", "Kotlin", "Swift", "PHP", "Ruby"})
+				if found == "" {
+					continue
+				}
+				if language != "" && language != found {
+					language = ""
+					break
+				}
+				language = found
+			}
+			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)
@@ -113,4 +135,13 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	}
 	walk(doc)
 	return result, nil
+}
+
+func recognized(value string, allowed []string) string {
+	for _, item := range allowed {
+		if strings.EqualFold(strings.TrimSpace(value), item) {
+			return item
+		}
+	}
+	return ""
 }

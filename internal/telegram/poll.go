@@ -70,8 +70,15 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 				}
 			}
 			m := update.Message
-			reply := b.Handle(ctx, Message{ChatID: m.Chat.ID, UserID: m.From.ID, ChatType: m.Chat.Type, Text: m.Text})
-			if hasClaims {
+			message := Message{ChatID: m.Chat.ID, UserID: m.From.ID, ChatType: m.Chat.Type, Text: m.Text}
+			atomic, reply, err := b.atomicStatus(ctx, update.ID, message)
+			if err != nil {
+				break
+			}
+			if !atomic {
+				reply = b.Handle(ctx, message)
+			}
+			if hasClaims && !atomic {
 				claimed, err := claims.ClaimTelegramUpdate(ctx, update.ID)
 				if err != nil {
 					break

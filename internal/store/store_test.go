@@ -772,3 +772,108 @@ func TestOldNotificationAttemptCannotFinishNewAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestObservationRetainsDirectionAndLanguage(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://skills.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Skills", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base+"/job")
+	x := Observation{SourceID: src.ID, URL: base + "/job", Direction: "Backend", Language: "Go"}
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	x.Direction = ""
+	x.Language = ""
+	if changed, err := db.Observe(ctx, x); err != nil || changed {
+		t.Fatalf("recheck %t %v", changed, err)
+	}
+	list, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range list {
+		if j.URL == x.URL {
+			if j.Direction != "Backend" || j.Language != "Go" {
+				t.Fatalf("job %+v", j)
+			}
+			return
+		}
+	}
+	t.Fatal("missing job")
+}
+
+func TestTelegramStatusAndAcknowledgementCommitTogether(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgatomic_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO telegram_link(chat_id) VALUES(123)`); err != nil {
+		t.Fatal(err)
+	}
+	src, err := db.AddSource(ctx, "test", "https://example.org", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: "https://example.org/job"}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ApplyTelegramStatus(ctx, 1, 999, id, "Откликнулся"); err == nil {
+		t.Fatal("unauthorized update accepted")
+	}
+	done, err := db.TelegramUpdateProcessed(ctx, 1)
+	if err != nil || done {
+		t.Fatalf("ack persisted on failure %v %v", done, err)
+	}
+	first, err := db.ApplyTelegramStatus(ctx, 1, 123, id, "Откликнулся")
+	if err != nil || !first {
+		t.Fatalf("first %v %v", first, err)
+	}
+	again, err := db.ApplyTelegramStatus(ctx, 1, 123, id, "Отказ")
+	if err != nil || again {
+		t.Fatalf("replay %v %v", again, err)
+	}
+	d, err := db.Details(ctx, id)
+	if err != nil || d.Job.Status != "Откликнулся" {
+		t.Fatalf("status %+v %v", d.Job, err)
+	}
+}

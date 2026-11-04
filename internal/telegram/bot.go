@@ -3,6 +3,8 @@ package telegram
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
@@ -86,7 +88,7 @@ func (b *Bot) Handle(ctx context.Context, m Message) string {
 		}
 		var out strings.Builder
 		for _, j := range list {
-			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Hours: j.Hours, Salary: j.Salary, Currency: j.Currency}) == jobs.Unsuitable {
+			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, Currency: j.Currency}) == jobs.Unsuitable {
 				continue
 			}
 			line := fmt.Sprintf("%d · %s · %s\n%s\n", j.ID, j.Title, j.Company, j.URL)
@@ -226,4 +228,45 @@ func (b *Bot) Handle(ctx context.Context, m Message) string {
 		return "Статус изменён."
 	}
 	return "Неизвестная команда. Используйте /help."
+}
+
+// atomicStatus commits a status command and its acknowledgement together.
+func (b *Bot) atomicStatus(ctx context.Context, updateID int64, m Message) (bool, string, error) {
+	storage, ok := b.links.(interface {
+		ApplyTelegramStatus(context.Context, int64, int64, int64, string) (bool, error)
+	})
+	if !ok || m.ChatType != "private" || m.ChatID != m.UserID {
+		return false, "", nil
+	}
+	parts := strings.Fields(m.Text)
+	if len(parts) != 3 || parts[0] != "/status" {
+		return false, "", nil
+	}
+	id, e1 := strconv.ParseInt(parts[1], 10, 64)
+	n, e2 := strconv.Atoi(parts[2])
+	statuses := []string{"Не откликался", "Откликнулся", "Тестовое", "Собеседование", "Оффер", "Отказ"}
+	if e1 != nil || e2 != nil || n < 1 || n > len(statuses) {
+		return false, "", nil
+	}
+	owner, err := b.links.TelegramChat(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "", nil
+	}
+	if err != nil {
+		return true, "", err
+	}
+	if owner != m.ChatID {
+		return false, "", nil
+	}
+	applied, err := storage.ApplyTelegramStatus(ctx, updateID, m.ChatID, id, statuses[n-1])
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "", nil
+	}
+	if err != nil {
+		return true, "", err
+	}
+	if !applied {
+		return true, "", nil
+	}
+	return true, "Статус изменён.", nil
 }
