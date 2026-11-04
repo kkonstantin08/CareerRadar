@@ -78,6 +78,9 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if place, ok := v["jobLocation"].(map[string]any); ok {
 				if addr, ok := place["address"].(map[string]any); ok {
 					location, _ = addr["addressLocality"].(string)
+					if strings.TrimSpace(location) == "" {
+						location, _ = addr["addressCountry"].(string)
+					}
 				}
 			}
 			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {

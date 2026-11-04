@@ -36,6 +36,14 @@ func TestParseExplicitLocationAndRemote(t *testing.T) {
 	}
 }
 
+func TestParseLocationCountryWhenCityMissing(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","jobLocation":{"address":{"@type":"PostalAddress","addressCountry":"RU"}}}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(got) != 1 || got[0].Location != "RU" {
+		t.Fatalf("jobs %+v %v", got, err)
+	}
+}
+
 func TestParseRemoteApplicantCountry(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","jobLocationType":"TELECOMMUTE","applicantLocationRequirements":{"@type":"Country","name":"Russia"}}</script>`
 	got, err := Parse(strings.NewReader(body), "https://example.org/job")

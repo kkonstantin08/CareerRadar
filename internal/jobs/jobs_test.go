@@ -63,6 +63,15 @@ func TestGeographyMatchesCommonEnglishAndRussianNames(t *testing.T) {
 	}
 }
 
+func TestCountryOnlyDoesNotDisproveSpecificCity(t *testing.T) {
+	for _, city := range []string{"Казань", "Москва", "Иннополис"} {
+		p := Preferences{Locations: []string{city}}
+		if got := p.Match(Job{Location: "RU"}); got != NeedsClarification {
+			t.Fatalf("country does not specify %s: %s", city, got)
+		}
+	}
+}
+
 func TestUnspecifiedLevelCanBeSelected(t *testing.T) {
 	p := Preferences{Levels: []string{"Не указан"}}
 	if got := p.Match(Job{}); got != NeedsClarification {

@@ -55,6 +55,18 @@ func (p Preferences) Match(j Job) Match {
 	if len(p.Locations) > 0 && (strings.EqualFold(strings.TrimSpace(location), "worldwide") || strings.EqualFold(strings.TrimSpace(location), "anywhere")) {
 		location = ""
 	}
+	if location == "россия" {
+		match := false
+		for _, allowed := range locations {
+			if allowed == "россия" {
+				match = true
+				break
+			}
+		}
+		if !match && len(locations) > 0 {
+			location = ""
+		}
+	}
 	for _, field := range []struct {
 		value   string
 		allowed []string
