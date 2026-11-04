@@ -24,15 +24,15 @@ func (s *Store) ClaimNotification(ctx context.Context, key string) (string, erro
 }
 
 // ClaimNextNotification exclusively reserves the oldest pending message.
-func (s *Store) ClaimNextNotification(ctx context.Context) (int64, int64, string, error) {
-	var id, attempt int64
+func (s *Store) ClaimNextNotification(ctx context.Context) (int64, int64, int64, string, error) {
+	var id, attempt, target int64
 	var message string
 	// SKIP LOCKED lets concurrent workers claim different events without waiting.
-	err := s.db.QueryRowContext(ctx, `UPDATE notifications SET state='sending',claimed_at=now(),attempt=attempt+1 WHERE id=(SELECT id FROM notifications WHERE state='pending' ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,attempt,message`).Scan(&id, &attempt, &message)
+	err := s.db.QueryRowContext(ctx, `UPDATE notifications SET state='sending',claimed_at=now(),attempt=attempt+1 WHERE id=(SELECT id FROM notifications WHERE state='pending' AND (target_chat_id IS NOT NULL OR EXISTS(SELECT 1 FROM telegram_link WHERE singleton=true)) ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,attempt,COALESCE(target_chat_id,(SELECT chat_id FROM telegram_link WHERE singleton=true)),message`).Scan(&id, &attempt, &target, &message)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, "", nil
+		return 0, 0, 0, "", nil
 	}
-	return id, attempt, message, err
+	return id, attempt, target, message, err
 }
 
 // FinishNotification records confirmed delivery or an ambiguous outcome.

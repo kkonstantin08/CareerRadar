@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"github.com/kkonstantin08/CareerRadar/migrations"
@@ -109,8 +110,14 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // AddSource adds a source once, returning the existing source for a duplicate URL.
 func (s *Store) AddSource(ctx context.Context, name, url string, enabled bool) (Source, error) {
+	return addSource(ctx, s.db, name, url, enabled)
+}
+
+func addSource(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, name, url string, enabled bool) (Source, error) {
 	var x Source
-	err := s.db.QueryRowContext(ctx, `INSERT INTO sources(name,url,enabled) VALUES($1,$2,$3) ON CONFLICT(url) DO UPDATE SET url=EXCLUDED.url RETURNING id,name,url,enabled,problem`, name, url, enabled).Scan(&x.ID, &x.Name, &x.URL, &x.Enabled, &x.Problem)
+	err := db.QueryRowContext(ctx, `INSERT INTO sources(name,url,enabled) VALUES($1,$2,$3) ON CONFLICT(url) DO UPDATE SET url=EXCLUDED.url RETURNING id,name,url,enabled,problem`, name, url, enabled).Scan(&x.ID, &x.Name, &x.URL, &x.Enabled, &x.Problem)
 	return x, err
 }
 
@@ -264,10 +271,23 @@ func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
 	return xs, rows.Err()
 }
 
+// ErrSourceURLConflict indicates that another source already owns the URL.
+var ErrSourceURLConflict = errors.New("source URL already exists")
+
 // UpdateSource changes source settings without modifying collected jobs.
 func (s *Store) UpdateSource(ctx context.Context, id int64, name, url string, enabled bool) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE sources SET name=$2,enabled=CASE WHEN url<>$3 THEN false ELSE $4 END,url=$3 WHERE id=$1`, id, name, url, enabled)
+	return updateSource(ctx, s.db, id, name, url, enabled)
+}
+
+func updateSource(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, id int64, name, url string, enabled bool) error {
+	result, err := db.ExecContext(ctx, `UPDATE sources SET name=$2,enabled=CASE WHEN url<>$3 THEN false ELSE $4 END,url=$3 WHERE id=$1`, id, name, url, enabled)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "sources_url_key" {
+			return ErrSourceURLConflict
+		}
 		return err
 	}
 	n, err := result.RowsAffected()
@@ -282,7 +302,13 @@ func (s *Store) UpdateSource(ctx context.Context, id int64, name, url string, en
 
 // DeleteSource removes a source while retaining its previously collected jobs.
 func (s *Store) DeleteSource(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM sources WHERE id=$1`, id)
+	return deleteSource(ctx, s.db, id)
+}
+
+func deleteSource(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, id int64) error {
+	result, err := db.ExecContext(ctx, `DELETE FROM sources WHERE id=$1`, id)
 	if err != nil {
 		return err
 	}

@@ -43,6 +43,7 @@ func main() {
 	client := collector.Client()
 	checks := monitor.New(db, func(ctx context.Context, u string) ([]collector.Job, error) { return collector.Fetch(ctx, client, u) })
 	go checks.RunDaily(ctx)
+	go checks.RunManualChecks(ctx)
 	if token := os.Getenv("TELEGRAM_BOT_TOKEN"); token != "" {
 		bot := telegram.New(db)
 		bot.SetCheck(checks.Check)

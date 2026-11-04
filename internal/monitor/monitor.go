@@ -22,11 +22,12 @@ type Service struct {
 	db    *store.Store
 	fetch func(context.Context, string) ([]collector.Job, error)
 	locks [64]sync.Mutex
+	limit chan struct{}
 }
 
 // New creates a monitor backed by the shared database.
 func New(db *store.Store, fetch func(context.Context, string) ([]collector.Job, error)) *Service {
-	return &Service{db: db, fetch: fetch}
+	return &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2)}
 }
 
 // Check reads a confirmed source and records its result without inferring closure.
@@ -51,6 +52,12 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 	if !src.Enabled {
 		return "", ErrNotConfirmed
 	}
+	select {
+	case s.limit <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-s.limit }()
 	found, fetchErr := s.fetch(ctx, src.URL)
 	problem := ""
 	if fetchErr != nil {

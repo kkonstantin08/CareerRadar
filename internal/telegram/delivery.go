@@ -10,8 +10,7 @@ import (
 )
 
 type deliveryStore interface {
-	TelegramChat(context.Context) (int64, error)
-	ClaimNextNotification(context.Context) (int64, int64, string, error)
+	ClaimNextNotification(context.Context) (int64, int64, int64, string, error)
 	FinishNotification(context.Context, int64, int64, bool) error
 	RecoverStaleNotifications(context.Context) error
 }
@@ -51,11 +50,7 @@ func Deliver(ctx context.Context, db deliveryStore, token string) {
 		if err := db.RecoverStaleNotifications(ctx); err != nil {
 			continue
 		}
-		chat, err := db.TelegramChat(ctx)
-		if err != nil {
-			continue
-		}
-		id, attempt, message, err := db.ClaimNextNotification(ctx)
+		id, attempt, chat, message, err := db.ClaimNextNotification(ctx)
 		if err != nil || id == 0 {
 			continue
 		}

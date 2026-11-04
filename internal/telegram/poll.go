@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -53,6 +54,7 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 			}
 			continue
 		}
+		retryUpdate := false
 		for _, update := range response.Result {
 			claims, hasClaims := b.links.(interface {
 				ClaimTelegramUpdate(context.Context, int64) (bool, error)
@@ -62,6 +64,7 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 			}); ok {
 				done, err := lookup.TelegramUpdateProcessed(ctx, update.ID)
 				if err != nil {
+					retryUpdate = true
 					break
 				}
 				if done {
@@ -71,16 +74,71 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 			}
 			m := update.Message
 			message := Message{ChatID: m.Chat.ID, UserID: m.From.ID, ChatType: m.Chat.Type, Text: m.Text}
-			atomic, reply, err := b.atomicStatus(ctx, update.ID, message)
+			atomic, reply, err := b.atomicLink(ctx, update.ID, message)
 			if err != nil {
+				retryUpdate = true
 				break
 			}
 			if !atomic {
-				reply = b.Handle(ctx, message)
+				atomic, reply, err = b.atomicStatus(ctx, update.ID, message)
+			}
+			if err != nil {
+				retryUpdate = true
+				break
+			}
+			if !atomic {
+				atomic, reply, err = b.atomicSource(ctx, update.ID, message)
+				if err != nil {
+					retryUpdate = true
+					break
+				}
+			}
+			if !atomic {
+				atomic, reply, err = b.atomicCheck(ctx, update.ID, message)
+				if err != nil {
+					retryUpdate = true
+					break
+				}
+			}
+			if !atomic {
+				reply, err = b.handle(ctx, message)
+				if err != nil {
+					retryUpdate = true
+					break
+				}
+			}
+			parts := strings.Fields(message.Text)
+			linkAttempt := len(parts) == 2 && parts[0] == "/start"
+			if !atomic && reply != "" && linkAttempt && message.ChatType == "private" && message.ChatID == message.UserID {
+				if queue, ok := b.links.(interface {
+					RecordInvalidTelegramLink(context.Context, int64, int64) (bool, error)
+				}); ok {
+					_, err = queue.RecordInvalidTelegramLink(ctx, update.ID, message.ChatID)
+					if err != nil {
+						retryUpdate = true
+						break
+					}
+					offset = update.ID + 1
+					continue
+				}
+			}
+			if !atomic && reply != "" && !linkAttempt {
+				if queue, ok := b.links.(interface {
+					RecordTelegramReply(context.Context, int64, int64, string) (bool, error)
+				}); ok {
+					_, err = queue.RecordTelegramReply(ctx, update.ID, message.ChatID, reply)
+					if err != nil {
+						retryUpdate = true
+						break
+					}
+					offset = update.ID + 1
+					continue
+				}
 			}
 			if hasClaims && !atomic {
 				claimed, err := claims.ClaimTelegramUpdate(ctx, update.ID)
 				if err != nil {
+					retryUpdate = true
 					break
 				}
 				if !claimed {
@@ -89,6 +147,10 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 				}
 			}
 			offset = update.ID + 1
+			// Atomic commands persist their replies in the notification outbox.
+			if atomic {
+				continue
+			}
 			if reply == "" {
 				continue
 			}
@@ -103,5 +165,15 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 				res.Body.Close()
 			}
 		}
+		if retryUpdate {
+			timer := time.NewTimer(3 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+
 	}
 }

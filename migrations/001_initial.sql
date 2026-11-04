@@ -72,3 +72,12 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS attempt BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT '';
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS telegram_checks (
+ update_id BIGINT PRIMARY KEY REFERENCES telegram_updates(update_id),
+ source_id BIGINT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','running','done')),
+ claimed_at TIMESTAMPTZ,
+ attempt BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS telegram_checks_pending_idx ON telegram_checks(update_id) WHERE state='pending';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_chat_id BIGINT;

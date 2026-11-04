@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
@@ -868,6 +869,10 @@ func TestTelegramStatusAndAcknowledgementCommitTogether(t *testing.T) {
 	if err != nil || !first {
 		t.Fatalf("first %v %v", first, err)
 	}
+	var replyCount int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key='telegram-reply:1' AND message='Статус изменён.'`).Scan(&replyCount); err != nil || replyCount != 1 {
+		t.Fatalf("durable response count %d %v", replyCount, err)
+	}
 	again, err := db.ApplyTelegramStatus(ctx, 1, 123, id, "Отказ")
 	if err != nil || again {
 		t.Fatalf("replay %v %v", again, err)
@@ -875,5 +880,403 @@ func TestTelegramStatusAndAcknowledgementCommitTogether(t *testing.T) {
 	d, err := db.Details(ctx, id)
 	if err != nil || d.Job.Status != "Откликнулся" {
 		t.Fatalf("status %+v %v", d.Job, err)
+	}
+}
+
+func TestTelegramSourceMutationIsAtomicAndReplaySafe(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgsource_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO telegram_link(chat_id) VALUES(123)`); err != nil {
+		t.Fatal(err)
+	}
+	id, applied, err := db.ApplyTelegramSource(ctx, 101, 123, "add", 0, "Example", "https://example.org/jobs")
+	if err != nil || !applied || id == 0 {
+		t.Fatalf("add %d %t %v", id, applied, err)
+	}
+	_, applied, err = db.ApplyTelegramSource(ctx, 101, 123, "delete", id, "", "")
+	if err != nil || applied {
+		t.Fatalf("replay %t %v", applied, err)
+	}
+	if _, _, err = db.ApplyTelegramSource(ctx, 102, 999, "delete", id, "", ""); err == nil {
+		t.Fatal("unauthorized accepted")
+	}
+	done, err := db.TelegramUpdateProcessed(ctx, 102)
+	if err != nil || done {
+		t.Fatalf("unauthorized acknowledged %t %v", done, err)
+	}
+	if _, _, err = db.ApplyTelegramSource(ctx, 103, 123, "delete", id+100, "", ""); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing source: %v", err)
+	}
+	done, err = db.TelegramUpdateProcessed(ctx, 103)
+	if err != nil || done {
+		t.Fatalf("failed update acknowledged %t %v", done, err)
+	}
+	_, applied, err = db.ApplyTelegramSource(ctx, 104, 123, "confirm", id, "", "")
+	if err != nil || !applied {
+		t.Fatalf("confirm %t %v", applied, err)
+	}
+	xs, err := db.Sources(ctx)
+	if err != nil || len(xs) != 1 || !xs[0].Enabled {
+		t.Fatalf("sources %+v %v", xs, err)
+	}
+}
+
+func TestTelegramLinkAndAcknowledgementAreAtomic(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tglink_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	code, err := db.NewLinkCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ApplyTelegramLink(ctx, 20, "wrong", 123); err == nil {
+		t.Fatal("invalid code accepted")
+	}
+	done, err := db.TelegramUpdateProcessed(ctx, 20)
+	if err != nil || done {
+		t.Fatalf("invalid code acknowledged %t %v", done, err)
+	}
+	applied, err := db.ApplyTelegramLink(ctx, 21, code, 123)
+	if err != nil || !applied {
+		t.Fatalf("link %t %v", applied, err)
+	}
+	applied, err = db.ApplyTelegramLink(ctx, 21, code, 123)
+	if err != nil || applied {
+		t.Fatalf("replay %t %v", applied, err)
+	}
+	chat, err := db.TelegramChat(ctx)
+	if err != nil || chat != 123 {
+		t.Fatalf("owner %d %v", chat, err)
+	}
+}
+
+func TestTelegramCheckIsQueuedAtomicallyAndReplaySafe(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgcheck_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO telegram_link(chat_id) VALUES(123)`); err != nil {
+		t.Fatal(err)
+	}
+	src, err := db.AddSource(ctx, "Example", "https://example.org", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := db.QueueTelegramCheck(ctx, 42, 123, src.ID)
+	if err != nil || !applied {
+		t.Fatalf("queue %t %v", applied, err)
+	}
+	applied, err = db.QueueTelegramCheck(ctx, 42, 123, src.ID)
+	if err != nil || applied {
+		t.Fatalf("replay %t %v", applied, err)
+	}
+	var n int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM telegram_checks WHERE update_id=42`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("queue count %d %v", n, err)
+	}
+	_, err = db.QueueTelegramCheck(ctx, 43, 999, src.ID)
+	if err == nil {
+		t.Fatal("unauthorized accepted")
+	}
+	done, err := db.TelegramUpdateProcessed(ctx, 43)
+	if err != nil || done {
+		t.Fatalf("unauthorized acknowledged %v %v", done, err)
+	}
+}
+
+func TestTelegramCheckClaimRecoveryRejectsOldWorker(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tglease_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO telegram_link(chat_id) VALUES(123)`); err != nil {
+		t.Fatal(err)
+	}
+	src, err := db.AddSource(ctx, "Example", "https://example.org", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.QueueTelegramCheck(ctx, 42, 123, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	id, source, attempt, err := db.ClaimTelegramCheck(ctx)
+	if err != nil || id != 42 || source != src.ID {
+		t.Fatalf("claim %d %d %d %v", id, source, attempt, err)
+	}
+	if _, err = db.db.ExecContext(ctx, `UPDATE telegram_checks SET claimed_at=now()-interval '3 minutes' WHERE update_id=42`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.RecoverTelegramChecks(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, _, next, err := db.ClaimTelegramCheck(ctx)
+	if err != nil || next <= attempt {
+		t.Fatalf("next %d %v", next, err)
+	}
+	if err = db.FinishTelegramCheck(ctx, id, attempt); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err = db.db.QueryRowContext(ctx, `SELECT state FROM telegram_checks WHERE update_id=42`).Scan(&state); err != nil || state != "running" {
+		t.Fatalf("state %s %v", state, err)
+	}
+	if err = db.FinishTelegramCheck(ctx, id, next); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSourceURLConflictIsDistinguishedFromDatabaseFailure(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://conflict.example.org/%d", time.Now().UnixNano())
+	a, err := db.AddSource(ctx, "A", base+"/a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, a.ID)
+	b, err := db.AddSource(ctx, "B", base+"/b", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, b.ID)
+	if err = db.UpdateSource(ctx, a.ID, "A", b.URL, false); !errors.Is(err, ErrSourceURLConflict) {
+		t.Fatalf("expected URL conflict, got %v", err)
+	}
+}
+
+func TestTelegramReadReplyIsDurablyAcknowledgedOnce(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgreply_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO telegram_link(chat_id) VALUES(123)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.RecordTelegramReply(ctx, 44, 999, "private"); err == nil {
+		t.Fatal("unauthorized reply accepted")
+	}
+	done, err := db.TelegramUpdateProcessed(ctx, 44)
+	if err != nil || done {
+		t.Fatalf("unauthorized ack %t %v", done, err)
+	}
+	applied, err := db.RecordTelegramReply(ctx, 44, 123, "reply")
+	if err != nil || !applied {
+		t.Fatalf("reply %t %v", applied, err)
+	}
+	applied, err = db.RecordTelegramReply(ctx, 44, 123, "different")
+	if err != nil || applied {
+		t.Fatalf("replay %t %v", applied, err)
+	}
+	var msg string
+	if err = db.db.QueryRowContext(ctx, `SELECT message FROM notifications WHERE event_key='telegram-reply:44'`).Scan(&msg); err != nil || msg != "reply" {
+		t.Fatalf("message %q %v", msg, err)
+	}
+}
+
+func TestInvalidLinkReplyQueuedWithoutStoringCode(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tginvalid_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	created, err := db.RecordInvalidTelegramLink(ctx, 21, 123)
+	if err != nil || !created {
+		t.Fatalf("record %t %v", created, err)
+	}
+	id, attempt, target, message, err := db.ClaimNextNotification(ctx)
+	if err != nil || id == 0 || attempt == 0 || target != 123 || message == "" {
+		t.Fatalf("claim %d %d %d %q %v", id, attempt, target, message, err)
+	}
+	created, err = db.RecordInvalidTelegramLink(ctx, 21, 123)
+	if err != nil || created {
+		t.Fatalf("replay %t %v", created, err)
+	}
+}
+
+func TestNotificationClaimReturnsOwnerChatAtomically(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgowner_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO telegram_link(chat_id) VALUES(123)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueueNotification(ctx, "test", "message"); err != nil {
+		t.Fatal(err)
+	}
+	id, attempt, chat, message, err := db.ClaimNextNotification(ctx)
+	if err != nil || id == 0 || attempt == 0 || chat != 123 || message != "message" {
+		t.Fatalf("claim %d %d %d %q %v", id, attempt, chat, message, err)
 	}
 }
