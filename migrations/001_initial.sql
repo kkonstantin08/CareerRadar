@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS job_history (
  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS job_history_job_idx ON job_history(job_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS job_history_created_job_idx ON job_history(created_at, job_id);
 CREATE TABLE IF NOT EXISTS checks (
  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  source_id BIGINT REFERENCES sources(id) ON DELETE SET NULL,

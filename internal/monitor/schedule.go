@@ -78,10 +78,10 @@ func (s *Service) runOnce(ctx context.Context, day string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	found, err := s.db.Jobs(ctx)
+	total, added, changed, err := s.db.RecentJobCounts(ctx, time.Now().Add(-24*time.Hour))
 	if err != nil {
 		return err
 	}
-	message := fmt.Sprintf("Ежедневная сводка за %s\nИсточников проверено: %d\nТребуют внимания: %d\nВакансий сохранено: %d", day, enabled, problems.Load(), len(found))
+	message := fmt.Sprintf("Ежедневная сводка за %s\nИсточников проверено: %d\nТребуют внимания: %d\nЗа последние 24 часа: новых — %d, изменённых — %d\nВакансий сохранено: %d", day, enabled, problems.Load(), added, changed, total)
 	return s.db.QueueNotification(ctx, "daily:"+day, message)
 }

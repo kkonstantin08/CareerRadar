@@ -14,7 +14,7 @@ A work-in-progress personal IT opportunity tracker built with Go and PostgreSQL.
 - Preserve observed facts when a later observation is incomplete; retain source evidence and change snapshots, including previous terms, deadlines and descriptions in job details, and distinguish source errors from confirmed closure.
 - Schedule enabled-source checks at 08:00 Europe/Moscow with up to two checks concurrently. Missed runs are not backfilled.
 - View jobs, source health and check history in a Russian web interface; change application status and preferences. The current collector extracts only some fields used by filters.
-- Link a private Telegram chat with an expiring one-use code. The bot supports `/jobs`, `/sources`, `/add`, `/confirm`, `/disable`, `/edit`, `/delete`, `/check`, `/status` and `/help`. The `/jobs` list shows application, closure and clarification statuses; notifications describe known job terms and changes, including deadlines and compensation. Source warnings and daily summaries are also queued in PostgreSQL. Uncertain delivery is not retried automatically.
+- Link a private Telegram chat with an expiring one-use code. The bot supports `/jobs`, `/sources`, `/add`, `/confirm`, `/disable`, `/edit`, `/delete`, `/check`, `/status` and `/help`. The `/jobs` list shows application, closure and clarification statuses; notifications describe known job terms and changes, including deadlines and compensation. Daily summaries include counts of new and changed jobs over the last 24 hours. Source warnings and summaries are queued in PostgreSQL. Uncertain delivery is not retried automatically.
 - Serve an authenticated REST API, OpenAPI document and Swagger UI.
 
 ## Stack and architecture

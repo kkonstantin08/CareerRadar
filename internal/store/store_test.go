@@ -132,6 +132,60 @@ func TestJobNotificationsDescribeNewAndChangedConditions(t *testing.T) {
 	}
 }
 
+func TestRecentJobCountsCountJobsRatherThanRevisions(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("daily_counts_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	src, err := db.AddSource(ctx, "Test", "https://summary.example", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"new", "changed", "old"} {
+		if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: src.URL + "/" + name, Title: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = db.db.ExecContext(ctx, `UPDATE job_history SET created_at=now()-interval '48 hours' WHERE job_id IN (SELECT id FROM jobs WHERE title IN ('changed','old'))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range []string{"Changed once", "Changed twice"} {
+		if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: src.URL + "/changed", Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: src.URL + "/new", Title: "New updated"}); err != nil {
+		t.Fatal(err)
+	}
+	total, added, changed, err := db.RecentJobCounts(ctx, time.Now().Add(-24*time.Hour))
+	if err != nil || total != 3 || added != 1 || changed != 1 {
+		t.Fatalf("counts total=%d new=%d changed=%d error=%v", total, added, changed, err)
+	}
+}
+
 func TestNotificationShowsChangedWorkloadAndPay(t *testing.T) {
 	oldHours, newHours := 20, 30
 	oldMin, oldMax, newSalary := int64(50000), int64(70000), int64(80000)

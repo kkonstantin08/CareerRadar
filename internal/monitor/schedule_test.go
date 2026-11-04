@@ -374,6 +374,13 @@ func TestDailySummaryQueuedOnce(t *testing.T) {
 	defer sqlDB.Close()
 	day := fmt.Sprintf("test-%d", time.Now().UnixNano())
 	defer sqlDB.ExecContext(ctx, `DELETE FROM notifications WHERE event_key=$1`, "daily:"+day)
+	src, err := db.AddSource(ctx, "Test", "https://daily.example", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: src.URL + "/job", Title: "New"}); err != nil {
+		t.Fatal(err)
+	}
 	svc := New(db, func(context.Context, string) ([]collector.Job, error) { return nil, errors.New("test unavailable") })
 	if err = svc.runOnce(ctx, day); err != nil {
 		t.Fatal(err)
@@ -384,6 +391,10 @@ func TestDailySummaryQueuedOnce(t *testing.T) {
 	var n int
 	if err = sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key=$1`, "daily:"+day).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("summary count %d %v", n, err)
+	}
+	var message string
+	if err = sqlDB.QueryRowContext(ctx, `SELECT message FROM notifications WHERE event_key=$1`, "daily:"+day).Scan(&message); err != nil || !strings.Contains(message, "новых — 1, изменённых — 0") {
+		t.Fatalf("summary %q %v", message, err)
 	}
 }
 

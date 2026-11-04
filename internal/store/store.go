@@ -375,6 +375,18 @@ func (s *Store) RecordCheck(ctx context.Context, sourceID int64, problem string)
 	return tx.Commit()
 }
 
+// RecentJobCounts reports distinct new and changed jobs since the given instant.
+func (s *Store) RecentJobCounts(ctx context.Context, since time.Time) (total, added, changed int, err error) {
+	// The first recorded revision distinguishes newly discovered jobs from updates.
+	err = s.db.QueryRowContext(ctx, `WITH recent AS (
+		SELECT job_id, MIN(id) AS first_recent_id FROM job_history WHERE created_at >= $1 GROUP BY job_id
+	), classified AS (
+		SELECT r.job_id, EXISTS (SELECT 1 FROM job_history h WHERE h.job_id=r.job_id AND h.id<r.first_recent_id) AS previously_known FROM recent r
+	)
+	SELECT (SELECT count(*) FROM jobs), count(*) FILTER (WHERE NOT previously_known), count(*) FILTER (WHERE previously_known) FROM classified`, since).Scan(&total, &added, &changed)
+	return
+}
+
 // Jobs lists stored jobs, newest first.
 func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs ORDER BY updated_at DESC,id DESC`)
