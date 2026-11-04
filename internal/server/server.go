@@ -83,6 +83,72 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 		}
 		writeJSON(w, 200, results)
 	})
+	mux.HandleFunc("POST /api/discovery", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			http.Error(w, "expected application/json", 415)
+			return
+		}
+		var input struct {
+			Query string `json:"query"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if dec.Decode(&input) != nil || len(strings.TrimSpace(input.Query)) < 2 || len(input.Query) > 100 {
+			http.Error(w, "invalid search query", 400)
+			return
+		}
+		results, err := discovery.Search(r.Context(), collector.Client(), input.Query)
+		if err != nil {
+			http.Error(w, "global search unavailable", 502)
+			return
+		}
+		if err = db.SaveDiscovered(r.Context(), results); err != nil {
+			http.Error(w, "could not save discovery results", 500)
+			return
+		}
+		writeJSON(w, 200, results)
+	})
+	mux.HandleFunc("GET /api/notifications/uncertain", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.RecoverStaleNotifications(r.Context()); err != nil {
+			http.Error(w, "database error", 500)
+			return
+		}
+		list, err := db.UncertainNotifications(r.Context())
+		if err != nil {
+			http.Error(w, "database error", 500)
+			return
+		}
+		writeJSON(w, 200, list)
+	})
+	mux.HandleFunc("POST /api/notifications/{id}/resolve", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid ID", 400)
+			return
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			http.Error(w, "expected application/json", 415)
+			return
+		}
+		var input struct {
+			Decision string `json:"decision"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if dec.Decode(&input) != nil || (input.Decision != "sent" && input.Decision != "retry") {
+			http.Error(w, "invalid decision", 400)
+			return
+		}
+		if err = db.ResolveNotification(r.Context(), id, input.Decision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "notification not awaiting resolution", 409)
+			} else {
+				http.Error(w, "database error", 500)
+			}
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"resolved": true})
+	})
 	mux.HandleFunc("GET /api/checks", func(w http.ResponseWriter, r *http.Request) {
 		checks, err := db.RecentChecks(r.Context())
 		if err != nil {

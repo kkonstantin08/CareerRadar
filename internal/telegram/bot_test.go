@@ -126,3 +126,38 @@ func TestOwnerCanDisableSource(t *testing.T) {
 		t.Fatalf("response %q, updated %t", got, f.updated)
 	}
 }
+
+type trackedClaims struct {
+	fakeLinks
+	handled      bool
+	claimedAfter bool
+}
+
+func (f *trackedClaims) LinkTelegram(ctx context.Context, code string, id int64) error {
+	f.handled = true
+	return f.fakeLinks.LinkTelegram(ctx, code, id)
+}
+func (f *trackedClaims) ClaimTelegramUpdate(ctx context.Context, id int64) (bool, error) {
+	f.claimedAfter = f.handled
+	return true, nil
+}
+func TestUpdateIsNotAcknowledgedBeforeCommand(t *testing.T) {
+	f := &trackedClaims{}
+	b := New(f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/botTEST/getUpdates":
+			_, _ = io.WriteString(w, `{"ok":true,"result":[{"update_id":1,"message":{"chat":{"id":5,"type":"private"},"from":{"id":5},"text":"/start secret"}}]}`)
+		case "/botTEST/sendMessage":
+			_, _ = io.WriteString(w, `{"ok":true}`)
+			cancel()
+		}
+	}))
+	defer srv.Close()
+	b.poll(ctx, srv.Client(), srv.URL, "TEST")
+	if !f.claimedAfter {
+		t.Fatal("update claimed before command execution")
+	}
+}

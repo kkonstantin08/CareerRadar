@@ -77,3 +77,10 @@ func (s *Store) ClaimTelegramUpdate(ctx context.Context, id int64) (bool, error)
 	n, err := result.RowsAffected()
 	return n == 1, err
 }
+
+// TelegramUpdateProcessed reports whether a command completed before acknowledgement.
+func (s *Store) TelegramUpdateProcessed(ctx context.Context, id int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM telegram_updates WHERE update_id=$1)`, id).Scan(&exists)
+	return exists, err
+}

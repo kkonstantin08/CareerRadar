@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -646,5 +647,52 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 		if _, ok := fields[name]; !ok {
 			t.Errorf("missing %s", name)
 		}
+	}
+}
+
+func TestUncertainNotificationResolutionAPI(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key := fmt.Sprintf("api-notice-%d", time.Now().UnixNano())
+	if err = db.QueueNotification(ctx, key, "inspect notification"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ClaimNotification(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	defer raw.ExecContext(ctx, `DELETE FROM notifications WHERE event_key=$1`, key)
+	var id int64
+	if err = raw.QueryRowContext(ctx, `UPDATE notifications SET state='unknown' WHERE event_key=$1 RETURNING id`, key).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	h := New(db, "owner", "secret")
+	req := httptest.NewRequest(http.MethodGet, "/api/notifications/uncertain", nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "inspect notification") {
+		t.Fatalf("list %d %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/notifications/%d/resolve", id), strings.NewReader(`{"decision":"sent"}`))
+	req.SetBasicAuth("owner", "secret")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("resolve %d %s", w.Code, w.Body.String())
 	}
 }

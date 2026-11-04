@@ -6,9 +6,9 @@ Date: 2026-11-04. Reviewer: GPT-6 Luna, reasoning effort High. Scope: source, te
 
 - **P1 — Incomplete collector and filters.** `internal/collector/parse.go` extracts only a subset of fields and recognizes hours and monthly salary only in narrow structured formats. `internal/jobs/jobs.go` cannot reject a mismatch when an attribute was not extracted. Reproduce with a valid posting containing salary ranges, location eligibility, language, specialization or a non-JSON-LD representation: the missing fields remain unknown. Support additional explicit source formats and keep unknown values conservative.
 - **P1 — No automatic confirmation of closure.** `internal/monitor/monitor.go` never infers closure from a missing vacancy or a failed source; `internal/store/closure.go` records only an owner's confirmation. A vacancy explicitly marked closed by a supported source will not be closed automatically. Add source-specific, independently verifiable closure evidence and regression tests; never interpret unavailability alone as closure.
-- **P1 — Discovery results are transient.** `internal/discovery/remotive.go` and `/api/discovery` return Remotive results without persisting them in the shared catalog. Search for a vacancy, reload and inspect `/api/jobs`: the discovered result has not been saved. Add durable, attributed ingestion and prevent automatic activation of any suggested company source.
-- **P2 — Telegram update crash window.** `internal/telegram/poll.go` claims an update in the database before its command runs. A process failure between these steps causes that update to be skipped on restart. Make the command and its acknowledgement durable as one recoverable operation.
-- **P2 — Uncertain notification delivery lacks an operator workflow.** `internal/telegram/delivery.go` retains ambiguous outcomes instead of automatically retrying, but the UI does not provide a way to inspect and resolve them. Expose delivery state and an explicit resolution action without guessing whether a message was sent.
+- **Addressed — Discovery results were transient.** The web search now persists attributed Remotive results; the associated source remains disabled.
+- **P2 — Telegram update crash window.** `internal/telegram/poll.go` records an update after its command runs. A crash between execution and recording can replay the command; transient errors returned as user-facing messages may still be acknowledged. Make the command and its acknowledgement durable as one recoverable operation.
+- **Addressed — Uncertain notification delivery lacked an operator workflow.** Stale sends are now marked unknown and the History screen offers explicit resolution or retry with a duplicate warning.
 - **P2 — Remaining interface and integration gaps.** Catalog filtering, presentation, source coverage and full Telegram/web parity are incomplete. The actual Telegram bot, full mobile workflows and a clean-machine deployment have not been exercised. The catalog currently loads all stored jobs rather than providing paginated SQL queries.
 
 ## Fixed during development
@@ -20,3 +20,7 @@ Previous independent reviews identified loss of evidence on source deletion, uns
 ## Implementer verification
 
 `TEST_DATABASE_URL=... go test -race -count=1 ./...`, `go vet ./...` and `go build ./...` passed against an isolated local PostgreSQL instance. Greenhouse and Remotive smoke tests succeeded earlier in this task. A 390 px catalog view was visually checked; other mobile flows remain unverified. No live Telegram credentials were available.
+
+## Follow-up review, 2026-11-04
+
+GPT-6 Luna (High) independently reviewed the Remotive and uncertain-delivery changes. It found missing structured Remotive geography and an attempt-identity race when a stalled sender outlives recovery and an explicit retry. Both were fixed with regression tests: the location is retained, and each delivery attempt has a generation checked on completion. The reviewer did not run the tests or inspect a production deployment.

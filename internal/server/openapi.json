@@ -422,6 +422,40 @@
             "description": "Source unavailable"
           }
         }
+      },
+      "post": {
+        "summary": "Search Remotive and save results without enabling monitoring",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Attributed search results saved"
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "502": {
+            "description": "Search unavailable"
+          }
+        }
       }
     },
     "/api/checks": {
@@ -617,6 +651,62 @@
           },
           "404": {
             "description": "Job not found"
+          }
+        }
+      }
+    },
+    "/api/notifications/uncertain": {
+      "get": {
+        "summary": "List delivery outcomes awaiting owner review",
+        "responses": {
+          "200": {
+            "description": "Uncertain notifications"
+          }
+        }
+      }
+    },
+    "/api/notifications/{id}/resolve": {
+      "post": {
+        "summary": "Explicitly mark delivered or request retry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "decision"
+                ],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "sent",
+                      "retry"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved"
+          },
+          "409": {
+            "description": "Notification is not awaiting review"
           }
         }
       }

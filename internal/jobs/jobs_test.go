@@ -44,3 +44,10 @@ func TestMatchNumericAndMultiplePreferences(t *testing.T) {
 		t.Fatal("missing pay must remain unknown")
 	}
 }
+
+func TestWorldwideLocationDoesNotProveCountryEligibility(t *testing.T) {
+	p := Preferences{Locations: []string{"Россия"}}
+	if got := p.Match(Job{Location: "Worldwide"}); got != NeedsClarification {
+		t.Fatalf("worldwide eligibility must remain unknown: %s", got)
+	}
+}

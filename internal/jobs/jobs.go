@@ -43,11 +43,16 @@ const (
 // Match retains opportunities with missing facts but rejects confirmed mismatches.
 func (p Preferences) Match(j Job) Match {
 	unknown := false
+	location := j.Location
+	// Broad remote regions do not establish eligibility for a specific country.
+	if len(p.Locations) > 0 && (strings.EqualFold(strings.TrimSpace(location), "worldwide") || strings.EqualFold(strings.TrimSpace(location), "anywhere")) {
+		location = ""
+	}
 	for _, field := range []struct {
 		value   string
 		allowed []string
 	}{
-		{j.Level, p.Levels}, {j.Direction, p.Directions}, {j.Location, p.Locations}, {j.Type, p.Types}, {j.Language, p.Languages}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
+		{j.Level, p.Levels}, {j.Direction, p.Directions}, {location, p.Locations}, {j.Type, p.Types}, {j.Language, p.Languages}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
 	} {
 		if len(field.allowed) == 0 {
 			continue

@@ -11,8 +11,9 @@ import (
 
 type deliveryStore interface {
 	TelegramChat(context.Context) (int64, error)
-	ClaimNextNotification(context.Context) (int64, string, error)
-	FinishNotification(context.Context, int64, bool) error
+	ClaimNextNotification(context.Context) (int64, int64, string, error)
+	FinishNotification(context.Context, int64, int64, bool) error
+	RecoverStaleNotifications(context.Context) error
 }
 
 func send(ctx context.Context, client *http.Client, base, token string, chat int64, message string) bool {
@@ -47,18 +48,21 @@ func Deliver(ctx context.Context, db deliveryStore, token string) {
 			return
 		case <-ticker.C:
 		}
+		if err := db.RecoverStaleNotifications(ctx); err != nil {
+			continue
+		}
 		chat, err := db.TelegramChat(ctx)
 		if err != nil {
 			continue
 		}
-		id, message, err := db.ClaimNextNotification(ctx)
+		id, attempt, message, err := db.ClaimNextNotification(ctx)
 		if err != nil || id == 0 {
 			continue
 		}
 		confirmed := send(ctx, client, "https://api.telegram.org", token, chat, message)
 		// An interrupted or ambiguous send is never retried automatically.
 		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = db.FinishNotification(finishCtx, id, confirmed)
+		_ = db.FinishNotification(finishCtx, id, attempt, confirmed)
 		cancel()
 	}
 }

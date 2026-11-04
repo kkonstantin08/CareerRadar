@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"net/url"
 	"os"
@@ -617,4 +618,157 @@ func TestOwnerCanCorrectClosedStatus(t *testing.T) {
 		}
 	}
 	t.Fatal("job missing")
+}
+
+func TestUncertainNotificationCanBeResolvedWithoutResending(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key := fmt.Sprintf("uncertain-%d", time.Now().UnixNano())
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key=$1`, key)
+	if err = db.QueueNotification(ctx, key, "message"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ClaimNotification(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err = db.db.QueryRowContext(ctx, `UPDATE notifications SET state='unknown' WHERE event_key=$1 RETURNING id`, key).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ResolveNotification(ctx, id, "sent"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ResolveNotification(ctx, id, "retry"); err == nil {
+		t.Fatal("resolved message was eligible for retry")
+	}
+	var state string
+	if err = db.db.QueryRowContext(ctx, `SELECT state FROM notifications WHERE id=$1`, id).Scan(&state); err != nil || state != "sent" {
+		t.Fatalf("state %s %v", state, err)
+	}
+}
+
+func TestStaleSendingIsMarkedUnknownWithoutRetry(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key := fmt.Sprintf("stale-%d", time.Now().UnixNano())
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key=$1`, key)
+	if err = db.QueueNotification(ctx, key, "message"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ClaimNotification(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.db.ExecContext(ctx, `UPDATE notifications SET claimed_at=now()-interval '3 minutes' WHERE event_key=$1`, key); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.RecoverStaleNotifications(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err = db.db.QueryRowContext(ctx, `SELECT state FROM notifications WHERE event_key=$1`, key).Scan(&state); err != nil || state != "unknown" {
+		t.Fatalf("state %q %v", state, err)
+	}
+}
+
+func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	link := fmt.Sprintf("https://remotive.com/remote-jobs/test-%d", time.Now().UnixNano())
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, link)
+	result := discovery.Result{Title: "Go Engineer", Company: "Example", URL: link, Source: "Remotive", Location: "Worldwide"}
+	for i := 0; i < 2; i++ {
+		if err = db.SaveDiscovered(ctx, []discovery.Result{result}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	xs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, j := range xs {
+		if j.URL == link {
+			n++
+			if j.WorkMode != "remote" || j.Location != "Worldwide" {
+				t.Fatalf("job %+v", j)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("jobs %d", n)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range sources {
+		if src.URL == "https://remotive.com/remote-jobs" && src.Enabled {
+			t.Fatal("discovery source activated")
+		}
+	}
+}
+
+func TestOldNotificationAttemptCannotFinishNewAttempt(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key := fmt.Sprintf("attempt-%d", time.Now().UnixNano())
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key=$1`, key)
+	if err = db.QueueNotification(ctx, key, "message"); err != nil {
+		t.Fatal(err)
+	}
+	var id, first, second int64
+	if err = db.db.QueryRowContext(ctx, `UPDATE notifications SET state='sending',attempt=attempt+1 WHERE event_key=$1 RETURNING id,attempt`, key).Scan(&id, &first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.db.ExecContext(ctx, `UPDATE notifications SET state='unknown' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ResolveNotification(ctx, id, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.db.QueryRowContext(ctx, `UPDATE notifications SET state='sending',attempt=attempt+1 WHERE id=$1 RETURNING attempt`, id).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.FinishNotification(ctx, id, first, true); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err = db.db.QueryRowContext(ctx, `SELECT state FROM notifications WHERE id=$1`, id).Scan(&state); err != nil || state != "sending" {
+		t.Fatalf("old attempt changed new state %s %v", state, err)
+	}
+	if err = db.FinishNotification(ctx, id, second, true); err != nil {
+		t.Fatal(err)
+	}
 }

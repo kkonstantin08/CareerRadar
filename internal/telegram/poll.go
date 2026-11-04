@@ -54,9 +54,24 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 			continue
 		}
 		for _, update := range response.Result {
-			if claims, ok := b.links.(interface {
+			claims, hasClaims := b.links.(interface {
 				ClaimTelegramUpdate(context.Context, int64) (bool, error)
+			})
+			if lookup, ok := b.links.(interface {
+				TelegramUpdateProcessed(context.Context, int64) (bool, error)
 			}); ok {
+				done, err := lookup.TelegramUpdateProcessed(ctx, update.ID)
+				if err != nil {
+					break
+				}
+				if done {
+					offset = update.ID + 1
+					continue
+				}
+			}
+			m := update.Message
+			reply := b.Handle(ctx, Message{ChatID: m.Chat.ID, UserID: m.From.ID, ChatType: m.Chat.Type, Text: m.Text})
+			if hasClaims {
 				claimed, err := claims.ClaimTelegramUpdate(ctx, update.ID)
 				if err != nil {
 					break
@@ -67,8 +82,6 @@ func (b *Bot) poll(ctx context.Context, client *http.Client, base, token string)
 				}
 			}
 			offset = update.ID + 1
-			m := update.Message
-			reply := b.Handle(ctx, Message{ChatID: m.Chat.ID, UserID: m.From.ID, ChatType: m.Chat.Type, Text: m.Text})
 			if reply == "" {
 				continue
 			}
