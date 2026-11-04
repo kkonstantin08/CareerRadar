@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS jobs (
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS jobs_updated_at_idx ON jobs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS jobs_url_lower_prefix_idx ON jobs ((lower(url)) text_pattern_ops);
 CREATE TABLE IF NOT EXISTS job_history (
  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  job_id BIGINT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

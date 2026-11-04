@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"github.com/kkonstantin08/CareerRadar/migrations"
 )
@@ -154,11 +155,24 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	}
 	u.RawQuery = query.Encode()
 	x.URL = u.String()
+	if canonical := collector.JobicyCanonicalURL(x.URL); canonical != "" {
+		x.URL = canonical
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
+	if id := collector.JobicyID(x.URL); id != "" {
+		// Serialize aliases of one listing before choosing an existing URL.
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "jobicy:"+id); err != nil {
+			return false, err
+		}
+		x.URL, err = jobicyStoredURL(ctx, tx, x.URL)
+		if err != nil {
+			return false, err
+		}
+	}
 	// The URL lock serializes first inserts and updates across concurrent checks.
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, x.URL); err != nil {
 		return false, err

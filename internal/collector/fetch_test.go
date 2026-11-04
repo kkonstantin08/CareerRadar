@@ -162,6 +162,19 @@ func TestJobicyRateLimitCoversAllProviderURLs(t *testing.T) {
 	}
 }
 
+func TestJobicyCanonicalJobURLVariants(t *testing.T) {
+	for _, raw := range []string{"https://www.jobicy.com/jobs/123-example?utm_source=x#details", "https://JOBICY.COM:443/jobs/123-example/"} {
+		if got := JobicyCanonicalURL(raw); got != "https://jobicy.com/jobs/123-example" {
+			t.Errorf("canonical URL for %s: %q", raw, got)
+		}
+	}
+	for _, raw := range []string{"https://jobicy.com.attacker.example/jobs/123-example", "https://jobicy.com:444/jobs/123-example", "https://jobicy.com/jobs/123-example?other=1"} {
+		if got := JobicyCanonicalURL(raw); got != "" {
+			t.Errorf("unsafe or ambiguous URL %s: %q", raw, got)
+		}
+	}
+}
+
 func TestRedirectCannotBypassJobicyThrottle(t *testing.T) {
 	client := Client()
 	from, _ := http.NewRequest(http.MethodGet, "https://other.example/jobs/123", nil)

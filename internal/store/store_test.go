@@ -911,6 +911,74 @@ func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	}
 }
 
+func TestJobicyLegacyURLIsReused(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	jobID := time.Now().UnixNano() % 1000000000000
+	legacy := fmt.Sprintf("https://www.jobicy.com/jobs/%d-example/", jobID)
+	canonical := fmt.Sprintf("https://jobicy.com/jobs/%d-example", jobID)
+	src, err := db.AddSource(ctx, "Legacy", canonical, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1 OR url=$2`, legacy, canonical)
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO jobs(url,source_id,title,status) VALUES($1,$2,'Original','Откликнулся')`, legacy, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: canonical, Title: "Updated"}); err != nil {
+		t.Fatal(err)
+	}
+	newSlug := fmt.Sprintf("https://jobicy.com/jobs/%d-new-title", jobID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, newSlug)
+	if changed, err := db.Observe(ctx, Observation{SourceID: src.ID, URL: newSlug, Title: "Updated"}); err != nil || changed {
+		t.Fatalf("renamed URL was not reused: %v %v", changed, err)
+	}
+	var count int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE url=$1 OR url=$2`, legacy, canonical).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("duplicate jobs %d %v", count, err)
+	}
+	var title, status string
+	if err = db.db.QueryRowContext(ctx, `SELECT title,status FROM jobs WHERE url=$1`, legacy).Scan(&title, &status); err != nil || title != "Updated" || status != "Откликнулся" {
+		t.Fatalf("legacy job %q %q %v", title, status, err)
+	}
+	var storedID int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, legacy).Scan(&storedID); err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 OR event_key LIKE $2`, fmt.Sprintf("closure:%d:%%", storedID), fmt.Sprintf("reopen:%d:%%", storedID))
+	if _, err = db.ConfirmClosedURL(ctx, newSlug, "https://jobicy.com/api/jobs/status?ids=999999999999"); err == nil {
+		t.Fatal("mismatched closure evidence accepted")
+	}
+	if ok, err := db.ConfirmClosedURL(ctx, newSlug, fmt.Sprintf("https://jobicy.com/api/jobs/status?ids=%d", jobID)); err != nil || !ok {
+		t.Fatalf("legacy closure %v %v", ok, err)
+	}
+	if err = db.ReopenJobicy(ctx, canonical, fmt.Sprintf("https://jobicy.com/api/jobs/status?ids=%d", jobID)); err != nil {
+		t.Fatalf("legacy reopening: %v", err)
+	}
+	var closed bool
+	if err = db.db.QueryRowContext(ctx, `SELECT closed FROM jobs WHERE url=$1`, legacy).Scan(&closed); err != nil || closed {
+		t.Fatalf("legacy status %v %v", closed, err)
+	}
+	if _, err = db.db.ExecContext(ctx, `INSERT INTO jobs(url,source_id,title) VALUES($1,$2,'Duplicate')`, newSlug, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: canonical, Title: "Updated"}); !errors.Is(err, ErrDuplicateJobicy) {
+		t.Fatalf("ambiguous duplicates: %v", err)
+	}
+	if err = db.ReopenJobicy(ctx, canonical, fmt.Sprintf("https://jobicy.com/api/jobs/status?ids=%d", jobID)); !errors.Is(err, ErrDuplicateJobicy) {
+		t.Fatalf("ambiguous reopening: %v", err)
+	}
+}
+
 func TestJobicyPollReservationIsSharedAcrossStoreConnections(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

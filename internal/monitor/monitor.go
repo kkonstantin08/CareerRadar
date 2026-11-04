@@ -138,6 +138,12 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		if status == "active" {
 			evidence := "https://jobicy.com/api/jobs/status?ids=" + jobID
 			if err = s.db.ReopenJobicy(ctx, src.URL, evidence); err != nil {
+				if errors.Is(err, store.ErrDuplicateJobicy) {
+					if recordErr := s.db.RecordCheck(ctx, src.ID, err.Error()); recordErr != nil {
+						return "", recordErr
+					}
+					return err.Error(), nil
+				}
 				return "", err
 			}
 		}
@@ -174,6 +180,10 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 			}
 			ok, err := s.db.ConfirmClosedURL(ctx, job.URL, job.SourceURL)
 			if err != nil {
+				if errors.Is(err, store.ErrDuplicateJobicy) {
+					problem = err.Error()
+					continue
+				}
 				return "", err
 			}
 			if !ok {
@@ -195,6 +205,10 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		}
 		_, err = s.db.Observe(ctx, store.Observation{SourceID: src.ID, PageURL: job.SourceURL, URL: jobURL, Title: job.Title, Company: job.Company, Description: job.Description, Deadline: job.Deadline, Location: job.Location, WorkMode: job.WorkMode, Type: job.Type, Level: job.Level, Direction: job.Direction, Language: job.Language, Hours: job.Hours, Salary: job.Salary, Currency: job.Currency})
 		if err != nil {
+			if errors.Is(err, store.ErrDuplicateJobicy) {
+				problem = err.Error()
+				continue
+			}
 			return "", err
 		}
 	}

@@ -218,10 +218,20 @@ func JobicyStatuses(ctx context.Context, client *http.Client, ids []string) (map
 }
 
 func jobicyID(u *url.URL) string {
-	if u.Scheme != "https" || u.Host != "jobicy.com" || u.RawQuery != "" || u.Fragment != "" {
+	host := strings.ToLower(u.Hostname())
+	if !strings.EqualFold(u.Scheme, "https") || (host != "jobicy.com" && host != "www.jobicy.com") || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.RawPath != "" {
 		return ""
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return ""
+	}
+	for key := range query {
+		if !strings.HasPrefix(strings.ToLower(key), "utm_") {
+			return ""
+		}
+	}
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSuffix(u.Path, "/"), "/"), "/")
 	if len(parts) != 2 || parts[0] != "jobs" {
 		return ""
 	}
@@ -231,6 +241,17 @@ func jobicyID(u *url.URL) string {
 		return ""
 	}
 	return id
+}
+
+// JobicyCanonicalURL normalizes supported aliases without discarding job-identifying parameters.
+func JobicyCanonicalURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || jobicyID(u) == "" {
+		return ""
+	}
+	u.Scheme, u.Host, u.RawQuery, u.Fragment = "https", "jobicy.com", "", ""
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	return u.String()
 }
 
 // IsJobicyURL reports whether a URL belongs to Jobicy.

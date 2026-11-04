@@ -11,6 +11,47 @@ import (
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
 )
 
+// ErrDuplicateJobicy indicates existing ambiguous records for one listing.
+var ErrDuplicateJobicy = errors.New("multiple stored Jobicy URLs for the same listing; source requires attention")
+
+// jobicyStoredURL preserves legacy URLs and refuses ambiguous existing duplicates.
+func jobicyStoredURL(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, raw string) (string, error) {
+	id := collector.JobicyID(raw)
+	if id == "" {
+		return raw, nil
+	}
+	path := "/jobs/" + id + "%"
+	// The prefix index bounds candidates; the parser below verifies the exact ID.
+	rows, err := db.QueryContext(ctx, `SELECT url FROM jobs WHERE lower(url) LIKE $1 OR lower(url) LIKE $2 OR lower(url) LIKE $3 OR lower(url) LIKE $4`, "https://jobicy.com"+path, "https://www.jobicy.com"+path, "https://jobicy.com:443"+path, "https://www.jobicy.com:443"+path)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	found := ""
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			return "", err
+		}
+		if collector.JobicyID(candidate) != id {
+			continue
+		}
+		if found != "" && found != candidate {
+			return "", ErrDuplicateJobicy
+		}
+		found = candidate
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if found != "" {
+		return found, nil
+	}
+	return collector.JobicyCanonicalURL(raw), nil
+}
+
 // ReserveJobicyPoll enforces Jobicy's shared one-hour automated polling interval.
 func (s *Store) ReserveJobicyPoll(ctx context.Context) (bool, error) {
 	var reserved bool
@@ -58,8 +99,15 @@ func (s *Store) SaveJobicyStatuses(ctx context.Context, statuses map[string]stri
 
 // ConfirmClosedURL closes an already observed URL and retains the supplied evidence.
 func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (bool, error) {
+	if err := validateJobicyEvidence(jobURL, evidence); err != nil {
+		return false, err
+	}
+	jobURL, err := jobicyStoredURL(ctx, s.db, jobURL)
+	if err != nil {
+		return false, err
+	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id)
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -140,16 +188,18 @@ func (s *Store) confirmClosed(ctx context.Context, id int64, evidence, origin st
 
 // ReopenJobicy reverses only a closure previously established by Jobicy.
 func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error {
-	u, err := url.Parse(evidence)
-	id := collector.JobicyID(jobURL)
-	if err != nil || id == "" || u.Scheme != "https" || u.Host != "jobicy.com" || u.User != nil || u.Path != "/api/jobs/status" || u.RawQuery != "ids="+id || u.Fragment != "" {
-		return errors.New("invalid Jobicy evidence")
+	if err := validateJobicyEvidence(jobURL, evidence); err != nil {
+		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	jobURL, err = jobicyStoredURL(ctx, tx, jobURL)
+	if err != nil {
+		return err
+	}
 	var jobID int64
 	var title string
 	var closed bool
@@ -185,6 +235,15 @@ func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error
 		return err
 	}
 	return tx.Commit()
+}
+
+func validateJobicyEvidence(jobURL, evidence string) error {
+	u, err := url.Parse(evidence)
+	id := collector.JobicyID(jobURL)
+	if err != nil || id == "" || u.Scheme != "https" || u.Host != "jobicy.com" || u.User != nil || u.Path != "/api/jobs/status" || u.RawQuery != "ids="+id || u.Fragment != "" {
+		return errors.New("invalid Jobicy evidence")
+	}
+	return nil
 }
 
 // Reopen lets the owner correct or reverse a closure while retaining history.

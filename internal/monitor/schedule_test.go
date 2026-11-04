@@ -52,7 +52,7 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	a, err := db.AddSource(ctx, "A", "https://jobicy.com/jobs/101-a", true)
+	a, err := db.AddSource(ctx, "A", "https://www.jobicy.com:443/jobs/101-a?utm_source=test#detail", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +62,9 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 	}
 	if _, err = db.Observe(ctx, store.Observation{SourceID: a.ID, URL: a.URL, Title: "Developer", Company: "Example"}); err != nil {
 		t.Fatal(err)
+	}
+	if changed, err := db.Observe(ctx, store.Observation{SourceID: a.ID, URL: "https://jobicy.com/jobs/101-a", Title: "Developer", Company: "Example"}); err != nil || changed {
+		t.Fatalf("URL variant created a duplicate: %v %v", changed, err)
 	}
 	if _, err = db.ConfirmClosedURL(ctx, a.URL, "https://jobicy.com/api/jobs/status?ids=101"); err != nil {
 		t.Fatal(err)
@@ -87,7 +90,7 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, job := range jobs {
-		if job.URL == a.URL && job.Closed {
+		if job.URL == "https://jobicy.com/jobs/101-a" && job.Closed {
 			t.Fatal("active Jobicy vacancy remained closed")
 		}
 	}
