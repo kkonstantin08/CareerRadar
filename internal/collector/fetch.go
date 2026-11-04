@@ -182,6 +182,14 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 				}
 				j.URL = resolved.String()
 			}
+			if len(extracted) == 1 && j.URL == actual {
+				apply, err := applicationLink(body, pageURL)
+				if err != nil {
+					problem = err
+				} else {
+					j.ApplyURL = apply
+				}
+			}
 			found = append(found, j)
 		}
 		if current.depth >= 2 || id != "" {
@@ -204,6 +212,50 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		problem = errors.New("no structured vacancies found; source requires attention")
 	}
 	return found, problem
+}
+
+func applicationLink(body []byte, base *url.URL) (string, error) {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	links := map[string]bool{}
+	invalid := false
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			label := strings.ToLower(strings.Join(strings.Fields(textContent(n)), " "))
+			if label == "apply" || label == "apply now" || label == "откликнуться" || label == "подать заявку" {
+				for _, attr := range n.Attr {
+					if attr.Key != "href" || strings.TrimSpace(attr.Val) == "" {
+						continue
+					}
+					ref, err := url.Parse(attr.Val)
+					if err != nil {
+						invalid = true
+						continue
+					}
+					u := base.ResolveReference(ref)
+					if (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {
+						invalid = true
+						continue
+					}
+					links[u.String()] = true
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	if invalid || len(links) > 1 {
+		return "", errors.New("application link is ambiguous or invalid; source requires attention")
+	}
+	for link := range links {
+		return link, nil
+	}
+	return "", nil
 }
 
 // JobicyID returns the listing ID for a supported individual Jobicy URL.

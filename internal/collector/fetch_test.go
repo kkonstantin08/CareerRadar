@@ -189,6 +189,39 @@ func TestFetchResolvesRelativeJobURLs(t *testing.T) {
 	}
 }
 
+func TestFetchExtractsUnambiguousApplicationLinkOnJobPage(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer"}</script><a href="/applications/42">Откликнуться</a>`
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://example.org/jobs/42")
+	if err != nil || len(got) != 1 || got[0].ApplyURL != "https://example.org/applications/42" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestFetchDoesNotGuessAmbiguousApplicationLink(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer"}</script><a href="/apply/1">Apply now</a><a href="/apply/2">Apply now</a>`
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://example.org/jobs/42")
+	if err == nil || len(got) != 1 || got[0].ApplyURL != "" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestFetchDoesNotUseUnsafeApplicationLink(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer"}</script><a href="javascript:alert(1)">Apply now</a>`
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://example.org/jobs/42")
+	if err == nil || len(got) != 1 || got[0].ApplyURL != "" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
 func TestFetchRejectsUnsafeRelativeJobURLs(t *testing.T) {
 	body := `<script type="application/ld+json">[{"@type":"JobPosting","title":"Bad","url":"javascript:alert(1)"},{"@type":"JobPosting","title":"Good","url":"/jobs/2"}]</script>`
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
