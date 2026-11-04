@@ -107,6 +107,28 @@ func TestFetchDoesNotMergeMultipleJobsWithoutURLs(t *testing.T) {
 	}
 }
 
+func TestFetchResolvesRelativeJobURLs(t *testing.T) {
+	body := `<script type="application/ld+json">[{"@type":"JobPosting","title":"Go","url":"/jobs/1"},{"@type":"JobPosting","title":"Python","url":"/jobs/2"}]</script>`
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://example.org/careers")
+	if err != nil || len(got) != 2 || got[0].URL != "https://example.org/jobs/1" || got[1].URL != "https://example.org/jobs/2" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestFetchRejectsUnsafeRelativeJobURLs(t *testing.T) {
+	body := `<script type="application/ld+json">[{"@type":"JobPosting","title":"Bad","url":"javascript:alert(1)"},{"@type":"JobPosting","title":"Good","url":"/jobs/2"}]</script>`
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://example.org/careers")
+	if err == nil || len(got) != 1 || got[0].URL != "https://example.org/jobs/2" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
 func TestJobicyClosedStatusIsExplicitAndBoundToID(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string

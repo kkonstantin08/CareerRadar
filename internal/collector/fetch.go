@@ -147,6 +147,11 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			problem = err
 			continue
 		}
+		pageURL, err := url.Parse(actual)
+		if err != nil {
+			problem = err
+			continue
+		}
 		for _, j := range extracted {
 			if j.URL == "" {
 				if len(extracted) > 1 {
@@ -154,6 +159,18 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 					continue
 				}
 				j.URL = actual
+			} else {
+				ref, err := url.Parse(j.URL)
+				if err != nil {
+					problem = errors.New("invalid vacancy URL; source requires attention")
+					continue
+				}
+				resolved := pageURL.ResolveReference(ref)
+				if (resolved.Scheme != "http" && resolved.Scheme != "https") || resolved.Hostname() == "" || resolved.User != nil {
+					problem = errors.New("invalid vacancy URL; source requires attention")
+					continue
+				}
+				j.URL = resolved.String()
 			}
 			found = append(found, j)
 		}
