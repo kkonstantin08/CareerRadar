@@ -126,6 +126,16 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		}
 		return parseGreenhouse(body, root.String())
 	}
+	if api := ashbyURL(root); api != "" {
+		body, actual, err := readPage(ctx, client, api)
+		if err != nil {
+			return nil, err
+		}
+		if actual != api {
+			return nil, errors.New("unexpected Ashby API redirect; source requires attention")
+		}
+		return parseAshby(body, root.String())
+	}
 	type page struct {
 		url   string
 		depth int

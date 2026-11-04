@@ -46,6 +46,36 @@ func TestGreenhousePublicAPI(t *testing.T) {
 	}
 }
 
+func TestAshbyPublicBoard(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://api.ashbyhq.com/posting-api/job-board/example" {
+			t.Fatalf("URL %s", r.URL)
+		}
+		body := `{"apiVersion":"1","jobs":[{"title":"Junior Go Engineer","isListed":true,"workplaceType":"Remote","employmentType":"Intern","descriptionPlain":"Build services","jobUrl":"https://jobs.ashbyhq.com/example/abc"},{"title":"Unlisted","isListed":false,"jobUrl":"https://jobs.ashbyhq.com/example/hidden"}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://jobs.ashbyhq.com/example")
+	if err != nil || len(got) != 1 || got[0].Title != "Junior Go Engineer" || got[0].WorkMode != "remote" || got[0].Type != "Internship" || got[0].Description != "Build services" || got[0].URL != "https://jobs.ashbyhq.com/example/abc" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestAshbyIncompleteListingsPreserveValidJobs(t *testing.T) {
+	for _, tc := range []struct {
+		body  string
+		count int
+	}{
+		{`{"jobs":[{"title":"Go","isListed":true,"jobUrl":"https://jobs.ashbyhq.com/example/1"},{"title":"Unknown","jobUrl":"https://jobs.ashbyhq.com/example/2"}]}`, 1},
+		{`{"jobs":[]}`, 0},
+		{`{"error":"unavailable"}`, 0},
+	} {
+		got, err := parseAshby([]byte(tc.body), "https://jobs.ashbyhq.com/example")
+		if err == nil || len(got) != tc.count {
+			t.Fatalf("jobs %+v error %v", got, err)
+		}
+	}
+}
+
 func TestGreenhouseBoardIncludesJobDescriptions(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/v1/boards/example/jobs" || r.URL.Query().Get("content") != "true" {
