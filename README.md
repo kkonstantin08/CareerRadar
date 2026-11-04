@@ -1,36 +1,38 @@
 # CareerRadar
 
-A work-in-progress personal IT opportunity tracker built with Go and PostgreSQL. CareerRadar collects public job information without LLMs and keeps unknown facts separate from confirmed ones.
+[English version](README.en.md)
 
-> **Development preview:** the product does not yet meet the complete MVP specification. Review the limitations below before relying on it for real applications.
+Персональный агрегатор IT-вакансий и стажировок на Go и PostgreSQL. CareerRadar собирает общедоступные данные без LLM и сохраняет отсутствующие сведения как неизвестные.
 
-## Current functionality
+> **Проект в разработке:** приложение ещё не полностью соответствует спецификации MVP. Перед использованием ознакомьтесь с ограничениями ниже.
 
-- Add, confirm, disable, edit and remove monitored source URLs through the API; import `name,url` CSV files or the `company,start_url` columns of the `SOURCES` sheet without activating imported sources.
-- Search Wikidata for candidate company websites and propose career links for confirmation. Search public Remotive listings with attribution.
-- Read schema.org `JobPosting` JSON-LD, follow a bounded number of relevant same-host HTML links and pagination links, and use the public Greenhouse API for Greenhouse boards and job pages.
-- Preserve observed facts when a later observation is incomplete; retain source evidence and change snapshots, and distinguish source errors from confirmed closure.
-- Schedule enabled-source checks at 08:00 Europe/Moscow with up to two checks concurrently. Missed runs are not backfilled.
-- View jobs, source health and check history in a Russian web interface; change application status and preferences. The current collector extracts only some fields used by filters.
-- Link a private Telegram chat with an expiring one-use code. The bot supports `/jobs`, `/sources`, `/add`, `/confirm`, `/disable`, `/edit`, `/delete`, `/check`, `/status` and `/help`. New or changed jobs, changed source warnings and daily summaries are queued in PostgreSQL. Uncertain delivery is not retried automatically.
-- Serve an authenticated REST API, OpenAPI document and Swagger UI.
+## Возможности
 
-## Stack and architecture
+- Добавление, подтверждение, отключение, редактирование и удаление источников через API. Импорт CSV с колонками `name,url` или `company,start_url` из листа `SOURCES`; импортированные источники остаются выключенными до подтверждения.
+- Поиск сайтов компаний через Wikidata и предложение карьерных страниц для подтверждения. Поиск публичных вакансий Remotive с указанием источника.
+- Чтение JSON-LD `JobPosting` по schema.org, ограниченный обход ссылок и страниц пагинации на том же сайте, работа с публичным API Greenhouse.
+- Сохранение ранее полученных данных при неполных последующих проверках, ссылок на источники и истории изменений. Ошибка источника не считается подтверждением закрытия вакансии.
+- Проверка включённых источников ежедневно в 08:00 по московскому времени, не более двух одновременно. Пропущенные проверки не запускаются задним числом.
+- Русскоязычный веб-кабинет с вакансиями, состоянием источников и историей проверок; изменение статусов отклика и предпочтений. Сборщик пока извлекает лишь часть полей, используемых фильтрами.
+- Привязка личного чата Telegram одноразовым кодом с ограниченным сроком действия. Бот поддерживает команды `/jobs`, `/sources`, `/add`, `/confirm`, `/disable`, `/edit`, `/delete`, `/check`, `/status` и `/help`. Уведомления о новых и изменённых вакансиях, новых ошибках источников и ежедневные сводки сохраняются в очереди PostgreSQL. Отправка с неизвестным результатом автоматически не повторяется.
+- REST API с аутентификацией, описание OpenAPI и Swagger UI.
 
-Go 1.27, PostgreSQL, `pgx`, `golang.org/x/net/html`, and a small HTML/CSS/JavaScript interface. One process serves HTTP, runs the scheduler and optionally polls Telegram; all interfaces share PostgreSQL.
+## Технологии и архитектура
+
+Go 1.27, PostgreSQL, `pgx`, `golang.org/x/net/html` и небольшой интерфейс на HTML, CSS и JavaScript. Один процесс обслуживает HTTP-запросы, запускает планировщик и при настройке получает сообщения Telegram; все интерфейсы используют общую PostgreSQL.
 
 ```mermaid
 flowchart LR
-    Web[Web cabinet] --> API[Go HTTP API]
-    Telegram[Telegram bot] --> App[Go application]
+    Web[Веб-кабинет] --> API[Go HTTP API]
+    Telegram[Telegram-бот] --> App[Go-приложение]
     API --> App
     App --> DB[(PostgreSQL)]
-    App --> Sources[Public sources]
+    App --> Sources[Публичные источники]
 ```
 
-## Local setup on macOS
+## Локальный запуск на macOS
 
-Install Go 1.27+ and PostgreSQL, start PostgreSQL, and create a database. For example, with Homebrew:
+Установите Go 1.27+ и PostgreSQL, запустите PostgreSQL и создайте базу данных. Например, с помощью Homebrew:
 
 ```sh
 brew install go postgresql@18
@@ -38,7 +40,7 @@ brew services start postgresql@18
 createdb careerradar
 ```
 
-Set environment variables in your shell. Use a strong unique password; do not commit credentials.
+Задайте переменные окружения в терминале. Используйте надёжный уникальный пароль и не добавляйте учётные данные в репозиторий.
 
 ```sh
 export DATABASE_URL='postgres://localhost:5432/careerradar?sslmode=disable'
@@ -47,17 +49,17 @@ export APP_PASSWORD='replace-with-a-strong-password'
 go run ./cmd/careerradar
 ```
 
-The app creates its initial schema on startup and listens only on `127.0.0.1:8080`. Open [the local cabinet](http://127.0.0.1:8080/) and authenticate using `APP_USER` and `APP_PASSWORD`. HTTP Basic credentials must only travel over a trusted local connection or HTTPS; exposing the app requires a separately configured trusted HTTPS proxy.
+При запуске приложение создаёт начальную схему базы и слушает только `127.0.0.1:8080`. Откройте [личный кабинет](http://127.0.0.1:8080/) и войдите с помощью `APP_USER` и `APP_PASSWORD`. Учётные данные HTTP Basic следует передавать только через доверенное локальное соединение или HTTPS; для внешнего доступа необходимо отдельно настроить доверенный HTTPS-прокси.
 
 ### Telegram
 
-Create a bot using Telegram's BotFather and provide its token through `TELEGRAM_BOT_TOKEN` before starting the app. In the cabinet, choose **Привязать Telegram**, then send the displayed `/start` command to your bot in a private chat within ten minutes. The code is stored only as a hash and can be used once. A new code cannot replace an already linked account.
+Создайте бота через BotFather и перед запуском приложения задайте его токен в переменной `TELEGRAM_BOT_TOKEN`. В кабинете нажмите **«Привязать Telegram»** и в течение десяти минут отправьте показанную команду `/start` своему боту в личном чате. Код хранится только в виде хеша и используется один раз. Новый код не может заменить уже привязанный аккаунт.
 
-Live Telegram delivery has not yet been verified in this environment; the token is not included in the repository.
+Реальная доставка сообщений Telegram в этой среде пока не проверена; токена бота в репозитории нет.
 
 ## API
 
-OpenAPI JSON is at `/openapi.json`, and Swagger UI is at `/swagger`. Swagger UI loads its assets from a public CDN. All endpoints require HTTP Basic authentication.
+Описание OpenAPI доступно по адресу `/openapi.json`, Swagger UI — по адресу `/swagger`. Swagger UI загружает ресурсы из публичной CDN. Для всех конечных точек нужна аутентификация HTTP Basic.
 
 ```sh
 curl -u "$APP_USER:$APP_PASSWORD" http://127.0.0.1:8080/api/sources
@@ -66,9 +68,9 @@ curl -u "$APP_USER:$APP_PASSWORD" -H 'Content-Type: application/json' \
   http://127.0.0.1:8080/api/sources
 ```
 
-A newly added source is disabled. Confirm it with `PUT /api/sources/{id}` before calling `POST /api/sources/{id}/check`. Import a CSV with `name,url` columns, or a `SOURCES` export with `company,start_url` columns using `POST /api/sources/import` and `Content-Type: text/csv`. The original Google spreadsheet can be read via the connected Google Drive tool. Export its `SOURCES` sheet to CSV for import; the application does not modify it.
+Новый источник выключен. Подтвердите его запросом `PUT /api/sources/{id}` перед вызовом `POST /api/sources/{id}/check`. Для импорта отправьте CSV с колонками `name,url` или экспорт листа `SOURCES` с колонками `company,start_url` на `POST /api/sources/import` с заголовком `Content-Type: text/csv`. Исходную Google-таблицу можно прочитать через подключённый инструмент Google Drive; экспортируйте лист `SOURCES` в CSV для импорта. Приложение не изменяет таблицу.
 
-## Tests
+## Тесты
 
 ```sh
 go test ./...
@@ -76,7 +78,7 @@ go vet ./...
 go build ./...
 ```
 
-PostgreSQL tests are skipped without `TEST_DATABASE_URL`. Provide a **dedicated disposable test database**, then run:
+Без `TEST_DATABASE_URL` тесты PostgreSQL пропускаются. Создайте **отдельную тестовую базу, данные которой можно удалить**, затем выполните:
 
 ```sh
 createdb careerradar_test
@@ -84,21 +86,21 @@ export TEST_DATABASE_URL='postgres://localhost:5432/careerradar_test?sslmode=dis
 go test -race -count=1 ./...
 ```
 
-Optional live smoke tests require network access and are excluded by default:
+Дополнительные проверки реальных источников требуют доступа к сети и по умолчанию не запускаются:
 
 ```sh
 SMOKE_COMPANY=Cloudflare go test ./internal/discovery -run TestPublicCompanySmoke -v
 SMOKE_SOURCE_URL='https://boards.greenhouse.io/COMPANY/jobs/JOB_ID' go test ./internal/collector -run TestPublicSourceSmoke -v
 ```
 
-## Known limitations
+## Известные ограничения
 
-- This is not a complete implementation of the original specification. Generic websites that do not expose supported JSON-LD may require attention; JavaScript rendering, CAPTCHA, authentication and access restrictions are not bypassed.
-- The crawler is bounded by time, depth, page count and response size. Greenhouse listings may lack full job details. A failed or incomplete check does not close or delete jobs.
-- Remotive results are delayed by the provider, are limited to remote jobs and may not be suitable for the user's geography. Search results are not yet saved to the catalog or linked automatically to a company source.
-- Company discovery depends on Wikidata and homepage links and can return ambiguous candidates. Always verify a candidate before enabling it.
-- Only a subset of attributes is extracted and applied to catalog filtering. Level, language, workload, compensation, program type and other fields are not yet extracted from all sources. Exact weekly hours and exact monthly salaries are read only when explicitly structured in supported JSON-LD. Geographic matching is exact.
-- Deduplication removes URL fragments and UTM parameters but does not merge distinct canonical URLs. Owners can record and undo a confirmed closure with an evidence link; automated confirmation of closures is not implemented.
-- The interface does not yet include every requested management action; the catalog was visually inspected at desktop and 390 px widths; other mobile workflows have not been fully verified.
-- The delivery queue does not automatically retry a send with an uncertain result; a notification interrupted during sending requires investigation. There is no interface for resolving uncertain notifications yet. Processed Telegram update IDs are persisted before command execution, so a crash at that point can leave an update unprocessed.
-- The automated checks do not replace a real Telegram end-to-end test, a clean-machine deployment test, or resolution of the outstanding findings in [the independent audit](docs/review.md).
+- Исходная спецификация ещё не реализована полностью. Для сайтов без поддерживаемого JSON-LD может потребоваться дополнительная обработка; приложение не обходит CAPTCHA, авторизацию и ограничения доступа и не выполняет JavaScript-рендеринг страниц.
+- Обход ограничен по времени, глубине, числу страниц и размеру ответа. Списки Greenhouse могут не содержать полных сведений о вакансиях. Неудачная или неполная проверка не закрывает и не удаляет вакансии.
+- Remotive публикует результаты с задержкой; источник ограничен удалёнными вакансиями, которые могут не подходить по географии. Результаты поиска пока не сохраняются в каталоге и не связываются автоматически с источником компании.
+- Поиск компаний зависит от Wikidata и ссылок на главной странице; возможны неоднозначные результаты. Проверяйте кандидата перед включением источника.
+- Извлекаются и применяются к фильтрации только некоторые атрибуты. Уровень, язык, нагрузка, оплата, тип программы и другие поля извлекаются не из всех источников. Точное число часов в неделю и точная месячная оплата считываются только из поддерживаемых структурированных данных JSON-LD. География сопоставляется точным сравнением.
+- Дедупликация удаляет фрагменты URL и параметры UTM, но не объединяет разные канонические адреса. Владелец может подтвердить закрытие со ссылкой на доказательство и отменить отметку; автоматическое подтверждение закрытия не реализовано.
+- Интерфейс пока не содержит всех запрошенных действий. Каталог визуально проверен на десктопной и мобильной ширине 390 px; остальные мобильные сценарии полностью не проверены.
+- При неизвестном результате отправки очередь не повторяет её автоматически; прерванное уведомление требует выяснения. Интерфейса для разрешения таких случаев пока нет. Идентификаторы обновлений Telegram сохраняются до выполнения команды, поэтому при сбое в этот момент обновление может остаться необработанным.
+- Автоматические проверки не заменяют сквозной тест с реальным Telegram-ботом, проверку развёртывания на чистой машине и устранение замечаний [независимого аудита](docs/review.md).
