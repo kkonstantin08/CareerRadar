@@ -19,10 +19,62 @@ var ErrNotConfirmed = errors.New("source is not confirmed")
 
 // Service serializes checks of the same source within the application process.
 type Service struct {
-	db    *store.Store
-	fetch func(context.Context, string) ([]collector.Job, error)
-	locks [64]sync.Mutex
-	limit chan struct{}
+	db          *store.Store
+	fetch       func(context.Context, string) ([]collector.Job, error)
+	locks       [64]sync.Mutex
+	limit       chan struct{}
+	jobicyMu    sync.Mutex
+	jobicyBatch func(context.Context, []string) (map[string]string, error)
+	jobicyFetch func(context.Context, string, string) ([]collector.Job, error)
+}
+
+// SetJobicyBatch configures the shared Jobicy synchronization pass before checks start.
+func (s *Service) SetJobicyBatch(batch func(context.Context, []string) (map[string]string, error), fetch func(context.Context, string, string) ([]collector.Job, error)) {
+	s.jobicyBatch, s.jobicyFetch = batch, fetch
+}
+
+func (s *Service) jobicyStatus(ctx context.Context, id string, sources []store.Source) (string, error) {
+	s.jobicyMu.Lock()
+	defer s.jobicyMu.Unlock()
+	status, err := s.db.JobicyStatus(ctx, id)
+	if err != nil || status != "" {
+		return status, err
+	}
+	allowed, err := s.db.ReserveJobicyPoll(ctx)
+	if err != nil || !allowed {
+		return "", err
+	}
+	var ids []string
+	seen := map[string]bool{}
+	for _, src := range sources {
+		jobID := collector.JobicyID(src.URL)
+		if src.Enabled && jobID != "" && !seen[jobID] {
+			ids = append(ids, jobID)
+			seen[jobID] = true
+		}
+	}
+	all := map[string]string{}
+	for len(ids) > 0 {
+		n := len(ids)
+		if n > 100 {
+			n = 100
+		}
+		batch, err := s.jobicyBatch(ctx, ids[:n])
+		if err != nil {
+			if all[id] != "" {
+				return all[id], nil
+			}
+			return "", err
+		}
+		if err := s.db.SaveJobicyStatuses(ctx, batch); err != nil {
+			return "", err
+		}
+		for key, value := range batch {
+			all[key] = value
+		}
+		ids = ids[n:]
+	}
+	return all[id], nil
 }
 
 // New creates a monitor backed by the shared database.
@@ -58,7 +110,32 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		return "", ctx.Err()
 	}
 	defer func() { <-s.limit }()
-	if collector.IsJobicyURL(src.URL) {
+	jobID := collector.JobicyID(src.URL)
+	status := ""
+	if jobID != "" && s.jobicyBatch != nil && s.jobicyFetch != nil {
+		status, err = s.jobicyStatus(ctx, jobID, sources)
+		if err != nil {
+			problem := err.Error()
+			if recordErr := s.db.RecordCheck(ctx, src.ID, problem); recordErr != nil {
+				return "", recordErr
+			}
+			return problem, nil
+		}
+		if status == "" {
+			problem := "Jobicy permits one synchronization per hour; check deferred"
+			if err = s.db.RecordCheck(ctx, src.ID, problem); err != nil {
+				return "", err
+			}
+			return problem, nil
+		}
+		problem, checked, err := s.db.JobicyChecked(ctx, src.ID, jobID)
+		if err != nil {
+			return "", err
+		}
+		if checked {
+			return problem, nil
+		}
+	} else if collector.IsJobicyURL(src.URL) {
 		// shortcut: one job per hourly pass, batch IDs when multiple Jobicy sources are supported.
 		allowed, err := s.db.ReserveJobicyPoll(ctx)
 		if err != nil {
@@ -72,7 +149,13 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 			return problem, nil
 		}
 	}
-	found, fetchErr := s.fetch(ctx, src.URL)
+	var found []collector.Job
+	var fetchErr error
+	if status != "" {
+		found, fetchErr = s.jobicyFetch(ctx, src.URL, status)
+	} else {
+		found, fetchErr = s.fetch(ctx, src.URL)
+	}
 	problem := ""
 	if fetchErr != nil {
 		problem = fetchErr.Error()

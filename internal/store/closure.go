@@ -19,6 +19,41 @@ func (s *Store) ReserveJobicyPoll(ctx context.Context) (bool, error) {
 	return reserved, err
 }
 
+// JobicyStatus returns a recently checked status, if one exists.
+func (s *Store) JobicyStatus(ctx context.Context, id string) (string, error) {
+	var status string
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM jobicy_status WHERE job_id=$1 AND checked_at > now()-interval '1 hour'`, id).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return status, err
+}
+
+// JobicyChecked returns the source result recorded since its cached status was fetched.
+func (s *Store) JobicyChecked(ctx context.Context, sourceID int64, id string) (string, bool, error) {
+	var problem string
+	err := s.db.QueryRowContext(ctx, `SELECT c.error FROM checks c JOIN jobicy_status j ON j.job_id=$2 WHERE c.source_id=$1 AND c.created_at >= j.checked_at AND j.checked_at > now()-interval '1 hour' ORDER BY c.id DESC LIMIT 1`, sourceID, id).Scan(&problem)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return problem, err == nil, err
+}
+
+// SaveJobicyStatuses stores one completed synchronization pass atomically.
+func (s *Store) SaveJobicyStatuses(ctx context.Context, statuses map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for id, status := range statuses {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO jobicy_status(job_id,status,checked_at) VALUES($1,$2,now()) ON CONFLICT(job_id) DO UPDATE SET status=EXCLUDED.status,checked_at=EXCLUDED.checked_at`, id, status); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ConfirmClosedURL closes an already observed URL and retains the supplied evidence.
 func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (bool, error) {
 	var id int64

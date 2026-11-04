@@ -85,3 +85,8 @@ CREATE TABLE IF NOT EXISTS jobicy_poll (
  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
  polled_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS jobicy_status (
+ job_id TEXT PRIMARY KEY,
+ status TEXT NOT NULL,
+ checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

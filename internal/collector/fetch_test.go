@@ -121,6 +121,17 @@ func TestJobicyActiveStatusReadsVacancy(t *testing.T) {
 	}
 }
 
+func TestKnownJobicyStatusDoesNotRepeatStatusRequest(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request %s", r.URL)
+		return nil, nil
+	})}
+	got, err := FetchJobicyStatus(context.Background(), client, "https://jobicy.com/jobs/123-example", "closed")
+	if err != nil || len(got) != 1 || !got[0].Closed {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
 func TestJobicyBatchStatusRequiresExactResponseIDs(t *testing.T) {
 	for _, tc := range []struct {
 		body  string

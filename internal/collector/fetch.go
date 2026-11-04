@@ -70,6 +70,18 @@ func publicIP(ip netip.Addr) bool {
 // Fetch follows relevant same-host links with strict page, depth, and time limits.
 // It returns partial observations alongside an error if any page was unavailable.
 func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, error) {
+	return fetch(ctx, client, rawURL, "")
+}
+
+// FetchJobicyStatus fetches a Jobicy page using a previously verified batch status.
+func FetchJobicyStatus(ctx context.Context, client *http.Client, rawURL, status string) ([]Job, error) {
+	if status != "active" && status != "closed" && status != "unknown" {
+		return nil, errors.New("invalid Jobicy status")
+	}
+	return fetch(ctx, client, rawURL, status)
+}
+
+func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]Job, error) {
 	root, err := url.Parse(rawURL)
 	if err != nil || (root.Scheme != "https" && root.Scheme != "http") || root.Hostname() == "" || root.User != nil {
 		return nil, errors.New("invalid source URL")
@@ -77,13 +89,19 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	id := jobicyID(root)
+	if status != "" && id == "" {
+		return nil, errors.New("invalid Jobicy job URL")
+	}
 	if id != "" {
 		statusURL := "https://jobicy.com/api/jobs/status?ids=" + id
-		statuses, err := JobicyStatuses(ctx, client, []string{id})
-		if err != nil {
-			return nil, err
+		if status == "" {
+			statuses, err := JobicyStatuses(ctx, client, []string{id})
+			if err != nil {
+				return nil, err
+			}
+			status = statuses[id]
 		}
-		switch statuses[id] {
+		switch status {
 		case "closed":
 			return []Job{{URL: root.String(), SourceURL: statusURL, Closed: true}}, nil
 		case "active":
@@ -149,6 +167,15 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 		problem = errors.New("no structured vacancies found; source requires attention")
 	}
 	return found, problem
+}
+
+// JobicyID returns the listing ID for a supported individual Jobicy URL.
+func JobicyID(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return jobicyID(u)
 }
 
 // JobicyStatuses reads one bounded batch of public listing statuses.

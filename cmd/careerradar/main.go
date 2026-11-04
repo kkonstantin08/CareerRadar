@@ -42,6 +42,11 @@ func main() {
 	defer db.Close()
 	client := collector.Client()
 	checks := monitor.New(db, func(ctx context.Context, u string) ([]collector.Job, error) { return collector.Fetch(ctx, client, u) })
+	checks.SetJobicyBatch(func(ctx context.Context, ids []string) (map[string]string, error) {
+		return collector.JobicyStatuses(ctx, client, ids)
+	}, func(ctx context.Context, u, status string) ([]collector.Job, error) {
+		return collector.FetchJobicyStatus(ctx, client, u, status)
+	})
 	go checks.RunDaily(ctx)
 	go checks.RunManualChecks(ctx)
 	if token := os.Getenv("TELEGRAM_BOT_TOKEN"); token != "" {

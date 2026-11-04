@@ -27,6 +27,140 @@ func TestNextMoscowRun(t *testing.T) {
 	}
 }
 
+func TestJobicyChecksShareBatch(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("jobicy_batch_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, _ := url.Parse(dsn)
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a, err := db.AddSource(ctx, "A", "https://jobicy.com/jobs/101-a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := db.AddSource(ctx, "B", "https://jobicy.com/jobs/102-b", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(db, func(context.Context, string) ([]collector.Job, error) { t.Fatal("unbatched fetch"); return nil, nil })
+	calls := 0
+	pageCalls := 0
+	svc.SetJobicyBatch(func(_ context.Context, ids []string) (map[string]string, error) {
+		calls++
+		if len(ids) != 2 {
+			t.Fatalf("batch %v", ids)
+		}
+		return map[string]string{"101": "active", "102": "active"}, nil
+	}, func(_ context.Context, raw, status string) ([]collector.Job, error) {
+		pageCalls++
+		return []collector.Job{{URL: raw, Title: "Developer", Company: "Example", Deadline: "2027-01-01"}}, nil
+	})
+	if _, err = svc.Check(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Check(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("batch calls %d", calls)
+	}
+	if _, err = svc.Check(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if pageCalls != 2 {
+		t.Fatalf("repeated page request: %d", pageCalls)
+	}
+	restarted := New(db, func(context.Context, string) ([]collector.Job, error) {
+		t.Fatal("unexpected fetch after restart")
+		return nil, nil
+	})
+	restarted.SetJobicyBatch(func(context.Context, []string) (map[string]string, error) {
+		t.Fatal("unexpected batch after restart")
+		return nil, nil
+	}, func(context.Context, string, string) ([]collector.Job, error) {
+		t.Fatal("unexpected page after restart")
+		return nil, nil
+	})
+	if _, err = restarted.Check(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJobicyRetainsSuccessfulChunksWhenLaterChunkFails(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("jobicy_partial_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, _ := url.Parse(dsn)
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var first store.Source
+	for i := 1; i <= 101; i++ {
+		src, err := db.AddSource(ctx, "Job", fmt.Sprintf("https://jobicy.com/jobs/%d-example", i), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			first = src
+		}
+	}
+	svc := New(db, nil)
+	svc.SetJobicyBatch(func(_ context.Context, ids []string) (map[string]string, error) {
+		if len(ids) == 1 {
+			return nil, errors.New("second batch unavailable")
+		}
+		m := map[string]string{}
+		for _, id := range ids {
+			m[id] = "active"
+		}
+		return m, nil
+	}, func(_ context.Context, raw, status string) ([]collector.Job, error) {
+		return []collector.Job{{URL: raw, Title: "Developer", Company: "Example", Deadline: "2027-01-01"}}, nil
+	})
+	if problem, err := svc.Check(ctx, first.ID); err != nil || problem != "" {
+		t.Fatalf("first chunk lost: %q %v", problem, err)
+	}
+	status, err := db.JobicyStatus(ctx, "1")
+	if err != nil || status != "active" {
+		t.Fatalf("saved status %q %v", status, err)
+	}
+}
+
 func TestExplicitClosureRequiresMatchingSavedJobAndSuccessfulFetch(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
