@@ -117,6 +117,26 @@ func TestOwnerCanViewJobsAndChangeStatus(t *testing.T) {
 	}
 }
 
+type clarificationData struct{ fakeData }
+
+func (f *clarificationData) Preferences(context.Context) (jobs.Preferences, error) {
+	return jobs.Preferences{Levels: []string{"Junior"}}, nil
+}
+func (f *clarificationData) Jobs(context.Context) ([]store.Job, error) {
+	return []store.Job{{ID: 7, Observation: store.Observation{Title: "Engineer", URL: "https://example.org/job"}, Status: "Откликнулся", Closed: true}}, nil
+}
+
+func TestTelegramShowsClarificationClosureAndApplicationStatus(t *testing.T) {
+	f := &clarificationData{}
+	f.linked = 5
+	got := New(f).Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"})
+	for _, want := range []string{"Требует уточнения", "Закрыта", "Откликнулся", "https://example.org/job"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
 type salaryData struct{ fakeData }
 
 func (f *salaryData) Preferences(context.Context) (jobs.Preferences, error) {

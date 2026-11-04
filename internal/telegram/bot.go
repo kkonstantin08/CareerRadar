@@ -103,10 +103,21 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		}
 		var out strings.Builder
 		for _, j := range list {
-			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency}) == jobs.Unsuitable {
+			match := prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
+			if match == jobs.Unsuitable {
 				continue
 			}
-			line := fmt.Sprintf("%d · %s · %s\n%s\n", j.ID, j.Title, j.Company, j.URL)
+			line := fmt.Sprintf("%d · %s · %s\n", j.ID, j.Title, j.Company)
+			if match == jobs.NeedsClarification {
+				line += "Требует уточнения\n"
+			}
+			if j.Closed {
+				line += "Закрыта\n"
+			}
+			if j.Status != "" {
+				line += "Отклик: " + j.Status + "\n"
+			}
+			line += j.URL + "\n"
 			if out.Len()+len(line) > 3000 {
 				break
 			}

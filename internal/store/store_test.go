@@ -137,11 +137,19 @@ func TestNotificationShowsChangedWorkloadAndPay(t *testing.T) {
 	oldMin, oldMax, newSalary := int64(50000), int64(70000), int64(80000)
 	before := Observation{Title: "Backend", Hours: &oldHours, SalaryMin: &oldMin, SalaryMax: &oldMax, Currency: "RUB"}
 	after := Observation{Title: "Backend", URL: "https://example.org/job", Hours: &newHours, Salary: &newSalary, Currency: "RUB"}
-	got := jobNotification(after, before, false)
+	got := jobNotification(after, before, false, false)
 	for _, want := range []string{"20 ч/нед.", "30 ч/нед.", "50000–70000 RUB/мес.", "80000 RUB/мес."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}
+	}
+}
+
+func TestJobNotificationFlagsUnknownFields(t *testing.T) {
+	x := Observation{Title: "Engineer", URL: "https://example.org/job"}
+	got := jobNotification(x, Observation{}, true, true)
+	if !strings.Contains(got, "Требует уточнения") {
+		t.Fatalf("message %q", got)
 	}
 }
 

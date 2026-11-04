@@ -230,8 +230,9 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if prefs.Match(jobs.Job{Company: x.Company, Location: x.Location, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level, Direction: x.Direction, Language: x.Language, Hours: x.Hours, Salary: x.Salary, SalaryMin: x.SalaryMin, SalaryMax: x.SalaryMax, Currency: x.Currency}) != jobs.Unsuitable {
-			message := jobNotification(x, old, newJob)
+		match := prefs.Match(jobs.Job{Company: x.Company, Location: x.Location, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level, Direction: x.Direction, Language: x.Language, Hours: x.Hours, Salary: x.Salary, SalaryMin: x.SalaryMin, SalaryMax: x.SalaryMax, Currency: x.Currency})
+		if match != jobs.Unsuitable {
+			message := jobNotification(x, old, newJob, match == jobs.NeedsClarification)
 			if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("job:%d:revision:%d", id, revision), message); err != nil {
 				return false, err
 			}
@@ -251,7 +252,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	return changed, nil
 }
 
-func jobNotification(current, previous Observation, isNew bool) string {
+func jobNotification(current, previous Observation, isNew, needsClarification bool) string {
 	short := func(s string) string {
 		runes := []rune(strings.TrimSpace(s))
 		if len(runes) > 80 {
@@ -290,6 +291,9 @@ func jobNotification(current, previous Observation, isNew bool) string {
 		lines = append(lines, "Изменена вакансия: "+short(current.Title))
 	}
 	lines = append(lines, "Компания: "+short(current.Company))
+	if needsClarification {
+		lines = append(lines, "Требует уточнения")
+	}
 	if isNew {
 		lines = append(lines, "Дедлайн: "+short(current.Deadline))
 		for _, field := range []struct{ name, value string }{
