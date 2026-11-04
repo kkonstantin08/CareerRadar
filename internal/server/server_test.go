@@ -565,11 +565,12 @@ func TestJobDetailsContainHistoryAndEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.DeleteSource(ctx, src.ID)
-	x := store.Observation{SourceID: src.ID, URL: base + "/job", Title: "First", PageURL: base}
+	x := store.Observation{SourceID: src.ID, URL: base + "/job", Title: "First", PageURL: base, Deadline: "2026-12-01"}
 	if _, err = db.Observe(ctx, x); err != nil {
 		t.Fatal(err)
 	}
 	x.Title = "Changed"
+	x.Deadline = "2026-12-15"
 	if _, err = db.Observe(ctx, x); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +588,7 @@ func TestJobDetailsContainHistoryAndEvidence(t *testing.T) {
 	req.SetBasicAuth("owner", "secret")
 	w := httptest.NewRecorder()
 	New(db, "owner", "secret").ServeHTTP(w, req)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "First") || !strings.Contains(w.Body.String(), base) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "First") || !strings.Contains(w.Body.String(), base) || !strings.Contains(w.Body.String(), "2026-12-01") || !strings.Contains(w.Body.String(), "2026-12-15") {
 		t.Fatalf("details %d %s", w.Code, w.Body.String())
 	}
 }
