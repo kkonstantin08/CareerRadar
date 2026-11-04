@@ -9,6 +9,7 @@ import (
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -827,7 +828,9 @@ func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	base := fmt.Sprintf("https://jobicy.com/jobs/%d-test", time.Now().UnixNano())
+	jobID := time.Now().UnixNano() % 1000000000000
+	base := fmt.Sprintf("https://jobicy.com/jobs/%d-test", jobID)
+	jobicyEvidence := fmt.Sprintf("https://jobicy.com/api/jobs/status?ids=%d", jobID)
 	src, err := db.AddSource(ctx, "Reopen test", base, true)
 	if err != nil {
 		t.Fatal(err)
@@ -845,7 +848,7 @@ func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	if err = db.ConfirmClosed(ctx, id, base); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+	if err = db.ReopenJobicy(ctx, base, jobicyEvidence); err != nil {
 		t.Fatal(err)
 	}
 	d, err := db.Details(ctx, id)
@@ -855,13 +858,16 @@ func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	if err = db.Reopen(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.ConfirmClosedURL(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+	if _, err = db.ConfirmClosedURL(ctx, base, jobicyEvidence); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=999999999999"); err == nil {
+		t.Fatal("mismatched evidence accepted")
+	}
+	if err = db.ReopenJobicy(ctx, base, jobicyEvidence); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+	if err = db.ReopenJobicy(ctx, base, jobicyEvidence); err != nil {
 		t.Fatal(err)
 	}
 	d, err = db.Details(ctx, id)
@@ -872,21 +878,36 @@ func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("reopen:%d:%%", id)).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("notifications %d %v", count, err)
 	}
-	if _, err = db.ConfirmClosedURL(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+	if _, err = db.ConfirmClosedURL(ctx, base, jobicyEvidence); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1 AND state='pending'`, fmt.Sprintf("reopen:%d:%%", id)).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("stale reopen notifications %d %v", count, err)
 	}
-	if err = db.ConfirmClosed(ctx, id, base); err != nil {
+	ownerEvidence := base + "/owner-proof"
+	if err = db.ConfirmClosed(ctx, id, ownerEvidence); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+	if err = db.ReopenJobicy(ctx, base, jobicyEvidence); err != nil {
 		t.Fatal(err)
 	}
 	d, err = db.Details(ctx, id)
 	if err != nil || !d.Job.Closed {
 		t.Fatalf("owner confirmation ignored: %+v %v", d.Job, err)
+	}
+	var ownerEvidenceFound, ownerHistoryFound bool
+	for _, evidence := range d.Evidence {
+		if evidence == ownerEvidence {
+			ownerEvidenceFound = true
+		}
+	}
+	for _, rev := range d.History {
+		if strings.Contains(string(rev.Snapshot), ownerEvidence) {
+			ownerHistoryFound = true
+		}
+	}
+	if !ownerEvidenceFound || !ownerHistoryFound {
+		t.Fatalf("owner evidence %v, history %v", ownerEvidenceFound, ownerHistoryFound)
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
 )
 
 // ReserveJobicyPoll enforces Jobicy's shared one-hour automated polling interval.
@@ -84,13 +86,31 @@ func (s *Store) confirmClosed(ctx context.Context, id int64, evidence, origin st
 	defer tx.Rollback()
 	var jobURL, title string
 	var closed bool
-	if err = tx.QueryRowContext(ctx, `SELECT url,title,closed FROM jobs WHERE id=$1 FOR UPDATE`, id).Scan(&jobURL, &title, &closed); err != nil {
+	var oldOrigin string
+	if err = tx.QueryRowContext(ctx, `SELECT url,title,closed,closed_by FROM jobs WHERE id=$1 FOR UPDATE`, id).Scan(&jobURL, &title, &closed, &oldOrigin); err != nil {
 		return err
 	}
 	if closed {
 		if origin == "owner" {
 			if _, err = tx.ExecContext(ctx, `UPDATE jobs SET closed_by='owner' WHERE id=$1`, id); err != nil {
 				return err
+			}
+			result, err := tx.ExecContext(ctx, `INSERT INTO job_evidence(job_url,page_url) VALUES($1,$2) ON CONFLICT(job_url,page_url) DO NOTHING`, jobURL, evidence)
+			if err != nil {
+				return err
+			}
+			added, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if oldOrigin != "owner" || added != 0 {
+				snapshot, err := json.Marshal(map[string]any{"closed": true, "evidence": evidence, "confirmed_by": "owner", "title": title})
+				if err != nil {
+					return err
+				}
+				if _, err = tx.ExecContext(ctx, `INSERT INTO job_history(job_id,snapshot) VALUES($1,$2)`, id, snapshot); err != nil {
+					return err
+				}
 			}
 		}
 		return tx.Commit()
@@ -121,7 +141,8 @@ func (s *Store) confirmClosed(ctx context.Context, id int64, evidence, origin st
 // ReopenJobicy reverses only a closure previously established by Jobicy.
 func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error {
 	u, err := url.Parse(evidence)
-	if err != nil || u.Scheme != "https" || u.Host != "jobicy.com" {
+	id := collector.JobicyID(jobURL)
+	if err != nil || id == "" || u.Scheme != "https" || u.Host != "jobicy.com" || u.User != nil || u.Path != "/api/jobs/status" || u.RawQuery != "ids="+id || u.Fragment != "" {
 		return errors.New("invalid Jobicy evidence")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -129,11 +150,11 @@ func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error
 		return err
 	}
 	defer tx.Rollback()
-	var id int64
+	var jobID int64
 	var title string
 	var closed bool
 	var origin string
-	err = tx.QueryRowContext(ctx, `SELECT id,title,closed,closed_by FROM jobs WHERE url=$1 FOR UPDATE`, jobURL).Scan(&id, &title, &closed, &origin)
+	err = tx.QueryRowContext(ctx, `SELECT id,title,closed,closed_by FROM jobs WHERE url=$1 FOR UPDATE`, jobURL).Scan(&jobID, &title, &closed, &origin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -143,7 +164,7 @@ func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error
 	if !closed || origin != "jobicy" {
 		return tx.Commit()
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE jobs SET closed=false,closed_by='',updated_at=now() WHERE id=$1`, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE jobs SET closed=false,closed_by='',updated_at=now() WHERE id=$1`, jobID); err != nil {
 		return err
 	}
 	snapshot, err := json.Marshal(map[string]any{"closed": false, "evidence": evidence, "title": title})
@@ -151,16 +172,16 @@ func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error
 		return err
 	}
 	var revision int64
-	if err = tx.QueryRowContext(ctx, `INSERT INTO job_history(job_id,snapshot) VALUES($1,$2) RETURNING id`, id, snapshot).Scan(&revision); err != nil {
+	if err = tx.QueryRowContext(ctx, `INSERT INTO job_history(job_id,snapshot) VALUES($1,$2) RETURNING id`, jobID, snapshot).Scan(&revision); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_evidence(job_url,page_url) VALUES($1,$2) ON CONFLICT(job_url,page_url) DO UPDATE SET last_seen=now()`, jobURL, evidence); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 AND state='pending'`, fmt.Sprintf("closure:%d:%%", id)); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 AND state='pending'`, fmt.Sprintf("closure:%d:%%", jobID)); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("reopen:%d:%d", id, revision), fmt.Sprintf("Вакансия вновь открыта по данным Jobicy: %s\n%s", title, jobURL)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("reopen:%d:%d", jobID, revision), fmt.Sprintf("Вакансия вновь открыта по данным Jobicy: %s\n%s", title, jobURL)); err != nil {
 		return err
 	}
 	return tx.Commit()

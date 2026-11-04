@@ -40,3 +40,7 @@ GPT-6 Luna (High) reviewed the Jobicy status integration and found that polling 
 The follow-up review identified loss of a successful batch when a later batch failed. Successful batches are now committed separately; a PostgreSQL-backed test covers 101 sources and a failed second batch. Jobicy URL variants with tracking parameters, `www`, or explicit ports do not currently receive the individual-page batching and closure handling. The reviewer also noted that a temporary page error remains cached for an hour; this avoids a new automated pass inside Jobicy's requested interval and is documented as a limitation.
 
 If the process stops after reserving a Jobicy pass but before storing its first batch, the pass cannot be retried until the hourly reservation expires. Multiple application processes can also concurrently fetch an individual page after reading the same cached status; the intended deployment uses one process. These are open reliability limitations.
+
+## Follow-up review: Jobicy reopening
+
+GPT-6 Luna (High) identified that an owner's confirmation of an already closed listing did not preserve the new evidence or record the change of origin, and that the store did not validate that reopening evidence identified the same listing. Both issues were fixed with PostgreSQL-backed regression tests. The reviewer did not run tests and did not finish checking every concurrency scenario; this is not the final audit.
