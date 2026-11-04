@@ -896,6 +896,98 @@ func TestChangedTitleRetainsExplicitInternship(t *testing.T) {
 	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
 }
 
+func TestSalaryRangePersistenceAndIncompleteRecheck(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://range.example/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Range", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	lo, hi := int64(80000), int64(120000)
+	x := Observation{SourceID: src.ID, URL: base, Title: "Engineer", SalaryMin: &lo, SalaryMax: &hi, Currency: "RUB"}
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	x.SalaryMin, x.SalaryMax, x.Currency = nil, nil, ""
+	if changed, err := db.Observe(ctx, x); err != nil || changed {
+		t.Fatalf("incomplete repeat %v %v", changed, err)
+	}
+	var id int64
+	var min, max int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id,monthly_salary_min,monthly_salary_max FROM jobs WHERE url=$1`, base).Scan(&id, &min, &max); err != nil || min != lo || max != hi {
+		t.Fatalf("range %d %d %v", min, max, err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
+	details, err := db.Details(ctx, id)
+	if err != nil || details.Job.SalaryMin == nil || *details.Job.SalaryMin != lo {
+		t.Fatalf("details %+v %v", details.Job, err)
+	}
+	newMin := int64(90000)
+	x.SalaryMin, x.Currency = &newMin, "RUB"
+	if changed, err := db.Observe(ctx, x); err != nil || !changed {
+		t.Fatalf("partial update %v %v", changed, err)
+	}
+	details, err = db.Details(ctx, id)
+	if err != nil || details.Job.SalaryMin == nil || *details.Job.SalaryMin != newMin || details.Job.SalaryMax != nil {
+		t.Fatalf("partial range %+v %v", details.Job, err)
+	}
+	retainedHistory := false
+	for _, revision := range details.History {
+		var snapshot struct {
+			Min *int64 `json:"salary_min"`
+			Max *int64 `json:"salary_max"`
+		}
+		if json.Unmarshal(revision.Snapshot, &snapshot) == nil && snapshot.Min != nil && snapshot.Max != nil && *snapshot.Min == lo && *snapshot.Max == hi {
+			retainedHistory = true
+		}
+	}
+	if !retainedHistory {
+		t.Fatal("previous confirmed range missing from history")
+	}
+	newMin = 130000
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	details, err = db.Details(ctx, id)
+	if err != nil || details.Job.SalaryMax != nil {
+		t.Fatalf("conflicting old maximum retained: %+v %v", details.Job, err)
+	}
+	x.SalaryMin, x.SalaryMax, x.Currency = &lo, &hi, "RUB"
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	x.SalaryMax, x.Currency = nil, "USD"
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	details, err = db.Details(ctx, id)
+	if err != nil || details.Job.SalaryMax != nil {
+		t.Fatalf("old currency maximum retained: %+v %v", details.Job, err)
+	}
+	amount := int64(100000)
+	x.SalaryMin = nil
+	x.Salary = &amount
+	x.Currency = "RUB"
+	if changed, err := db.Observe(ctx, x); err != nil || !changed {
+		t.Fatalf("exact update %v %v", changed, err)
+	}
+	details, err = db.Details(ctx, id)
+	if err != nil || details.Job.Salary == nil || *details.Job.Salary != amount || details.Job.SalaryMin != nil || details.Job.SalaryMax != nil {
+		t.Fatalf("exact %+v %v", details.Job, err)
+	}
+}
+
 func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

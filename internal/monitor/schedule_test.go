@@ -9,6 +9,7 @@ import (
 	"github.com/kkonstantin08/CareerRadar/internal/store"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,6 +120,51 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 	})
 	if _, err = restarted.Check(ctx, a.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("salary_monitor_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	src, err := db.AddSource(ctx, "Salary", "https://example.org/job", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"validThrough":"2027-01-01","baseSalary":{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"MONTH"}}}</script>`
+	svc := New(db, func(_ context.Context, raw string) ([]collector.Job, error) {
+		return collector.Parse(strings.NewReader(body), raw)
+	})
+	if problem, err := svc.Check(ctx, src.ID); err != nil || problem != "" {
+		t.Fatalf("check %q %v", problem, err)
+	}
+	got, err := db.Jobs(ctx)
+	if err != nil || len(got) != 1 || got[0].SalaryMin == nil || got[0].SalaryMax == nil || *got[0].SalaryMin != 80000 || *got[0].SalaryMax != 120000 {
+		t.Fatalf("jobs %+v %v", got, err)
 	}
 }
 

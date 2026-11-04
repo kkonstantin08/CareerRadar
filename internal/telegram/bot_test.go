@@ -117,6 +117,26 @@ func TestOwnerCanViewJobsAndChangeStatus(t *testing.T) {
 	}
 }
 
+type salaryData struct{ fakeData }
+
+func (f *salaryData) Preferences(context.Context) (jobs.Preferences, error) {
+	min := int64(100000)
+	return jobs.Preferences{MinSalary: &min, Currency: "RUB"}, nil
+}
+func (f *salaryData) Jobs(context.Context) ([]store.Job, error) {
+	lo, hi := int64(50000), int64(90000)
+	return []store.Job{{ID: 1, Observation: store.Observation{Title: "Low salary", URL: "https://example.org/low", SalaryMin: &lo, SalaryMax: &hi, Currency: "RUB"}}}, nil
+}
+
+func TestTelegramHidesSalaryRangeMismatch(t *testing.T) {
+	f := &salaryData{}
+	f.linked = 5
+	got := New(f).Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"})
+	if strings.Contains(got, "Low salary") {
+		t.Fatalf("unsuitable vacancy visible: %s", got)
+	}
+}
+
 func (f *fakeData) Preferences(context.Context) (jobs.Preferences, error) {
 	return jobs.Preferences{}, nil
 }

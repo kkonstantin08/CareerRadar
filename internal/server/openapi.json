@@ -78,6 +78,8 @@
             "nullable": true,
             "description": "Monthly amount in currency"
           },
+          "salary_min": {"type":"integer","format":"int64","nullable":true,"description":"Minimum monthly amount in currency"},
+          "salary_max": {"type":"integer","format":"int64","nullable":true,"description":"Maximum monthly amount in currency"},
           "closed": {
             "type": "boolean"
           },

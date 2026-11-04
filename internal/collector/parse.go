@@ -30,6 +30,8 @@ type Job struct {
 	Language    string
 	Hours       *int
 	Salary      *int64
+	SalaryMin   *int64
+	SalaryMax   *int64
 	Currency    string
 }
 
@@ -103,16 +105,24 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				}
 			}
 			var salary *int64
+			var salaryMin, salaryMax *int64
 			currency := ""
 			if base, ok := v["baseSalary"].(map[string]any); ok {
 				c, _ := base["currency"].(string)
 				if value, ok := base["value"].(map[string]any); ok {
 					unit, _ := value["unitText"].(string)
-					n, ok := value["value"].(float64)
-					if ok && strings.EqualFold(unit, "MONTH") && c != "" && n >= 0 && n <= float64(math.MaxInt64/2) && n == math.Trunc(n) {
-						amount := int64(n)
-						salary = &amount
-						currency = c
+					if strings.EqualFold(unit, "MONTH") && c != "" {
+						amount := salaryAmount(value["value"])
+						lo, hi := salaryAmount(value["minValue"]), salaryAmount(value["maxValue"])
+						hasAmount := value["value"] != nil
+						hasMin := value["minValue"] != nil
+						hasMax := value["maxValue"] != nil
+						if amount != nil && !hasMin && !hasMax {
+							salary, currency = amount, c
+						}
+						if !hasAmount && (lo != nil || hi != nil) && (!hasMin || lo != nil) && (!hasMax || hi != nil) && (lo == nil || hi == nil || *lo <= *hi) {
+							salaryMin, salaryMax, currency = lo, hi, c
+						}
 					}
 				}
 			}
@@ -136,7 +146,7 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			sort.Strings(languages)
 			language := strings.Join(languages, ", ")
-			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
+			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)
@@ -157,6 +167,15 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	}
 	walk(doc)
 	return result, nil
+}
+
+func salaryAmount(value any) *int64 {
+	n, ok := value.(float64)
+	if !ok || n < 0 || n > (1<<53)-1 || n != math.Trunc(n) {
+		return nil
+	}
+	amount := int64(n)
+	return &amount
 }
 
 func titleLevel(title string) (string, bool) {

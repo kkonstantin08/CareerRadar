@@ -2,6 +2,7 @@ package collector
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -85,6 +86,52 @@ func TestParseExplicitMonthlySalaryAndWeeklyHours(t *testing.T) {
 		t.Fatalf("fields: %+v", got[0])
 	}
 }
+
+func TestParseMonthlySalaryRange(t *testing.T) {
+	for _, tc := range []struct {
+		salary string
+		valid  bool
+	}{
+		{`{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"MONTH"}}`, true},
+		{`{"currency":"RUB","value":{"minValue":120000,"maxValue":80000,"unitText":"MONTH"}}`, false},
+		{`{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"YEAR"}}`, false},
+		{`{"currency":"RUB","value":{"minValue":9007199254740992,"maxValue":9007199254740993,"unitText":"MONTH"}}`, false},
+		{`{"currency":"RUB","value":{"value":100000,"minValue":"invalid","unitText":"MONTH"}}`, false},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","baseSalary":` + tc.salary + `}</script>`
+		jobs, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(jobs) != 1 {
+			t.Fatalf("jobs %+v %v", jobs, err)
+		}
+		got := jobs[0].SalaryMin != nil && jobs[0].SalaryMax != nil && *jobs[0].SalaryMin == 80000 && *jobs[0].SalaryMax == 120000 && jobs[0].Currency == "RUB"
+		if got != tc.valid {
+			t.Errorf("range %+v", jobs[0])
+		}
+		if !tc.valid && (jobs[0].Salary != nil || jobs[0].SalaryMin != nil || jobs[0].SalaryMax != nil || jobs[0].Currency != "") {
+			t.Errorf("invalid salary retained: %+v", jobs[0])
+		}
+	}
+}
+
+func TestParsePartialMonthlySalaryRange(t *testing.T) {
+	for _, tc := range []struct {
+		value           string
+		min, max, exact *int64
+	}{
+		{`{"value":null,"minValue":80000,"maxValue":120000,"unitText":"MONTH"}`, salaryTestAmount(80000), salaryTestAmount(120000), nil},
+		{`{"value":100000,"minValue":null,"maxValue":null,"unitText":"MONTH"}`, nil, nil, salaryTestAmount(100000)},
+		{`{"minValue":80000,"unitText":"MONTH"}`, salaryTestAmount(80000), nil, nil},
+		{`{"maxValue":120000,"unitText":"MONTH"}`, nil, salaryTestAmount(120000), nil},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","baseSalary":{"currency":"RUB","value":` + tc.value + `}}</script>`
+		got, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0].SalaryMin, tc.min) || !reflect.DeepEqual(got[0].SalaryMax, tc.max) || !reflect.DeepEqual(got[0].Salary, tc.exact) || got[0].Currency != "RUB" {
+			t.Fatalf("salary %+v %v", got, err)
+		}
+	}
+}
+
+func salaryTestAmount(n int64) *int64 { return &n }
 
 func TestParseExplicitSkillAndOccupation(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","occupationalCategory":"Backend","skills":["Go"]}</script>`

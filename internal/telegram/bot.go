@@ -103,7 +103,7 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		}
 		var out strings.Builder
 		for _, j := range list {
-			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, Currency: j.Currency}) == jobs.Unsuitable {
+			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency}) == jobs.Unsuitable {
 				continue
 			}
 			line := fmt.Sprintf("%d · %s · %s\n%s\n", j.ID, j.Title, j.Company, j.URL)

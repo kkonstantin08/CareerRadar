@@ -333,7 +333,7 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 			Match jobs.Match `json:"match"`
 		}, 0, len(xs))
 		for _, j := range xs {
-			match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, Currency: j.Currency})
+			match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
 			if match != jobs.Unsuitable {
 				result = append(result, struct {
 					store.Job

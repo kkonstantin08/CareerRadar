@@ -14,6 +14,8 @@ type Job struct {
 	WorkMode  string
 	Hours     *int
 	Salary    *int64
+	SalaryMin *int64
+	SalaryMax *int64
 	Currency  string
 }
 
@@ -102,10 +104,18 @@ func (p Preferences) Match(j Job) Match {
 		}
 	}
 	if p.MinSalary != nil {
-		if j.Salary == nil || j.Currency == "" || p.Currency == "" || !strings.EqualFold(j.Currency, p.Currency) {
+		if j.Currency == "" || p.Currency == "" || !strings.EqualFold(j.Currency, p.Currency) {
 			unknown = true
-		} else if *j.Salary < *p.MinSalary {
+		} else if j.Salary != nil && *j.Salary < *p.MinSalary {
 			return Unsuitable
+		} else if j.Salary == nil {
+			if j.SalaryMin != nil && j.SalaryMax != nil && *j.SalaryMin > *j.SalaryMax {
+				unknown = true
+			} else if j.SalaryMax != nil && *j.SalaryMax < *p.MinSalary {
+				return Unsuitable
+			} else if j.SalaryMin == nil || *j.SalaryMin < *p.MinSalary {
+				unknown = true
+			}
 		}
 	}
 	if unknown {

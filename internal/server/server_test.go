@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -401,6 +402,75 @@ func TestCatalogHidesExplicitMismatchButRetainsUnknown(t *testing.T) {
 	}
 }
 
+func TestCatalogUsesPersistedSalaryRanges(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("range_api_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	src, err := db.AddSource(ctx, "Range", "https://range.example", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	min := int64(100000)
+	if err = db.SavePreferences(ctx, jobs.Preferences{MinSalary: &min, Currency: "RUB"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range []struct {
+		name   string
+		lo, hi int64
+	}{{"low", 50000, 90000}, {"cross", 90000, 120000}, {"good", 110000, 150000}} {
+		lo, hi := x.lo, x.hi
+		if _, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: src.URL + "/" + x.name, Title: x.name, SalaryMin: &lo, SalaryMax: &hi, Currency: "RUB"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	var result []struct {
+		Title     string `json:"title"`
+		Match     string `json:"match"`
+		SalaryMin *int64 `json:"salary_min"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil {
+		t.Fatalf("response %d %s", w.Code, w.Body.String())
+	}
+	found := map[string]string{}
+	for _, j := range result {
+		if j.SalaryMin == nil {
+			t.Fatal("range missing")
+		}
+		found[j.Title] = j.Match
+	}
+	if len(found) != 2 || found["cross"] != "needs_clarification" || found["good"] != "suitable" {
+		t.Fatalf("catalog %+v", found)
+	}
+}
+
 func TestCheckHistoryVisibleInAPI(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -643,7 +713,7 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 	schemas := components["schemas"].(map[string]any)
 	job := schemas["Job"].(map[string]any)
 	fields := job["properties"].(map[string]any)
-	for _, name := range []string{"hours", "salary", "currency", "closed"} {
+	for _, name := range []string{"hours", "salary", "salary_min", "salary_max", "currency", "closed"} {
 		if _, ok := fields[name]; !ok {
 			t.Errorf("missing %s", name)
 		}

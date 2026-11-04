@@ -77,6 +77,32 @@ func TestUnspecifiedLevelCanBeSelected(t *testing.T) {
 	}
 }
 
+func TestSalaryRangeMatchesWithoutGuessing(t *testing.T) {
+	minimum := int64(100000)
+	p := Preferences{MinSalary: &minimum, Currency: "RUB"}
+	for _, tc := range []struct {
+		low, high *int64
+		want      Match
+	}{
+		{ptrSalary(110000), ptrSalary(150000), Suitable},
+		{ptrSalary(50000), ptrSalary(90000), Unsuitable},
+		{ptrSalary(90000), ptrSalary(120000), NeedsClarification},
+		{nil, ptrSalary(90000), Unsuitable},
+		{ptrSalary(110000), nil, Suitable},
+		{ptrSalary(120000), ptrSalary(80000), NeedsClarification},
+		{ptrSalary(100000), ptrSalary(100000), Suitable},
+	} {
+		if got := p.Match(Job{SalaryMin: tc.low, SalaryMax: tc.high, Currency: "RUB"}); got != tc.want {
+			t.Errorf("range %v..%v: %s", tc.low, tc.high, got)
+		}
+	}
+	if got := p.Match(Job{SalaryMin: ptrSalary(110000), SalaryMax: ptrSalary(150000), Currency: "USD"}); got != NeedsClarification {
+		t.Fatalf("currency mismatch: %s", got)
+	}
+}
+
+func ptrSalary(n int64) *int64 { return &n }
+
 func TestMatchMultiplePublishedLanguages(t *testing.T) {
 	p := Preferences{Languages: []string{"Python"}}
 	if got := p.Match(Job{Language: "Go, Python"}); got != Suitable {
