@@ -77,6 +77,74 @@ func TestSourcesAndRepeatedObservations(t *testing.T) {
 	}
 }
 
+func TestJobNotificationsDescribeNewAndChangedConditions(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://notice.example/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Notice", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	x := Observation{SourceID: src.ID, URL: base, Title: "Backend", Company: "Company", Deadline: "2026-12-01"}
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, base).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
+	x.Deadline = "2026-12-15"
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.db.QueryContext(ctx, `SELECT message FROM notifications WHERE event_key LIKE $1 ORDER BY id`, fmt.Sprintf("job:%d:%%", id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var messages []string
+	for rows.Next() {
+		var message string
+		if err = rows.Scan(&message); err != nil {
+			t.Fatal(err)
+		}
+		messages = append(messages, message)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || !strings.Contains(messages[0], "Новая") || !strings.Contains(messages[1], "Измен") || !strings.Contains(messages[1], "2026-12-01") || !strings.Contains(messages[1], "2026-12-15") || !strings.Contains(messages[1], base) {
+		t.Fatalf("messages %#v", messages)
+	}
+}
+
+func TestNotificationShowsChangedWorkloadAndPay(t *testing.T) {
+	oldHours, newHours := 20, 30
+	oldMin, oldMax, newSalary := int64(50000), int64(70000), int64(80000)
+	before := Observation{Title: "Backend", Hours: &oldHours, SalaryMin: &oldMin, SalaryMax: &oldMax, Currency: "RUB"}
+	after := Observation{Title: "Backend", URL: "https://example.org/job", Hours: &newHours, Salary: &newSalary, Currency: "RUB"}
+	got := jobNotification(after, before, false)
+	for _, want := range []string{"20 ч/нед.", "30 ч/нед.", "50000–70000 RUB/мес.", "80000 RUB/мес."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
 func TestEvidenceSurvivesSourceDeletion(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

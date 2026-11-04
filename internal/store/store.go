@@ -211,7 +211,8 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	if x.Salary != nil && (x.SalaryMin != nil || x.SalaryMax != nil) || x.SalaryMin != nil && x.SalaryMax != nil && *x.SalaryMin > *x.SalaryMax || x.Salary != nil && *x.Salary < 0 || x.SalaryMin != nil && *x.SalaryMin < 0 || x.SalaryMax != nil && *x.SalaryMax < 0 {
 		return false, errors.New("invalid salary range")
 	}
-	changed := !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || !reflect.DeepEqual(x.SalaryMin, old.SalaryMin) || !reflect.DeepEqual(x.SalaryMax, old.SalaryMax) || x.Currency != old.Currency || errors.Is(err, sql.ErrNoRows) || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level || x.Direction != old.Direction || x.Language != old.Language
+	newJob := errors.Is(err, sql.ErrNoRows)
+	changed := !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || !reflect.DeepEqual(x.SalaryMin, old.SalaryMin) || !reflect.DeepEqual(x.SalaryMax, old.SalaryMax) || x.Currency != old.Currency || newJob || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level || x.Direction != old.Direction || x.Language != old.Language
 	if changed {
 		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,direction,language,monthly_salary_min,monthly_salary_max) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,weekly_hours=EXCLUDED.weekly_hours,monthly_salary=EXCLUDED.monthly_salary,salary_currency=EXCLUDED.salary_currency,direction=EXCLUDED.direction,language=EXCLUDED.language,monthly_salary_min=EXCLUDED.monthly_salary_min,monthly_salary_max=EXCLUDED.monthly_salary_max,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level, x.Hours, x.Salary, x.Currency, x.Direction, x.Language, x.SalaryMin, x.SalaryMax).Scan(&id)
 		if err != nil {
@@ -230,7 +231,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 			return false, err
 		}
 		if prefs.Match(jobs.Job{Company: x.Company, Location: x.Location, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level, Direction: x.Direction, Language: x.Language, Hours: x.Hours, Salary: x.Salary, SalaryMin: x.SalaryMin, SalaryMax: x.SalaryMax, Currency: x.Currency}) != jobs.Unsuitable {
-			message := fmt.Sprintf("Вакансия: %s\nКомпания: %s\nДедлайн: %s\n%s", x.Title, x.Company, x.Deadline, x.URL)
+			message := jobNotification(x, old, newJob)
 			if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("job:%d:revision:%d", id, revision), message); err != nil {
 				return false, err
 			}
@@ -248,6 +249,82 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		return false, err
 	}
 	return changed, nil
+}
+
+func jobNotification(current, previous Observation, isNew bool) string {
+	short := func(s string) string {
+		runes := []rune(strings.TrimSpace(s))
+		if len(runes) > 80 {
+			return string(runes[:80]) + "…"
+		}
+		if len(runes) == 0 {
+			return "не указано"
+		}
+		return string(runes)
+	}
+	var lines []string
+	hours := func(n *int) string {
+		if n == nil {
+			return "не указано"
+		}
+		return fmt.Sprintf("%d ч/нед.", *n)
+	}
+	pay := func(j Observation) string {
+		if j.Salary != nil {
+			return fmt.Sprintf("%d %s/мес.", *j.Salary, short(j.Currency))
+		}
+		if j.SalaryMin != nil && j.SalaryMax != nil {
+			return fmt.Sprintf("%d–%d %s/мес.", *j.SalaryMin, *j.SalaryMax, short(j.Currency))
+		}
+		if j.SalaryMin != nil {
+			return fmt.Sprintf("от %d %s/мес.", *j.SalaryMin, short(j.Currency))
+		}
+		if j.SalaryMax != nil {
+			return fmt.Sprintf("до %d %s/мес.", *j.SalaryMax, short(j.Currency))
+		}
+		return "не указано"
+	}
+	if isNew {
+		lines = append(lines, "Новая вакансия: "+short(current.Title))
+	} else {
+		lines = append(lines, "Изменена вакансия: "+short(current.Title))
+	}
+	lines = append(lines, "Компания: "+short(current.Company))
+	if isNew {
+		lines = append(lines, "Дедлайн: "+short(current.Deadline))
+		for _, field := range []struct{ name, value string }{
+			{"География", current.Location}, {"Формат", current.WorkMode}, {"Уровень", current.Level}, {"Направление", current.Direction}, {"Языки", current.Language}, {"Тип", current.Type},
+		} {
+			if strings.TrimSpace(field.value) != "" {
+				lines = append(lines, field.name+": "+short(field.value))
+			}
+		}
+		if current.Hours != nil {
+			lines = append(lines, "Нагрузка: "+hours(current.Hours))
+		}
+		if current.Salary != nil || current.SalaryMin != nil || current.SalaryMax != nil {
+			lines = append(lines, "Оплата: "+pay(current))
+		}
+	} else {
+		for _, field := range []struct{ name, old, current string }{
+			{"Название", previous.Title, current.Title}, {"Компания", previous.Company, current.Company}, {"Дедлайн", previous.Deadline, current.Deadline}, {"География", previous.Location, current.Location}, {"Формат", previous.WorkMode, current.WorkMode}, {"Уровень", previous.Level, current.Level}, {"Направление", previous.Direction, current.Direction}, {"Языки", previous.Language, current.Language}, {"Тип", previous.Type, current.Type},
+		} {
+			if field.old != field.current {
+				lines = append(lines, field.name+": "+short(field.old)+" → "+short(field.current))
+			}
+		}
+		if !reflect.DeepEqual(current.Hours, previous.Hours) {
+			lines = append(lines, "Нагрузка: "+hours(previous.Hours)+" → "+hours(current.Hours))
+		}
+		if !reflect.DeepEqual(current.Salary, previous.Salary) || !reflect.DeepEqual(current.SalaryMin, previous.SalaryMin) || !reflect.DeepEqual(current.SalaryMax, previous.SalaryMax) || current.Currency != previous.Currency {
+			lines = append(lines, "Оплата: "+pay(previous)+" → "+pay(current))
+		}
+		if current.Description != previous.Description {
+			lines = append(lines, "Изменилось описание")
+		}
+	}
+	lines = append(lines, current.URL)
+	return strings.Join(lines, "\n")
 }
 
 // RecordCheck records a result without treating source errors as closures.
