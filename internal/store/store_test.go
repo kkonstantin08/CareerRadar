@@ -816,6 +816,80 @@ func TestObservationRetainsDirectionAndLanguage(t *testing.T) {
 	t.Fatal("missing job")
 }
 
+func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://jobicy.com/jobs/%d-test", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Reopen test", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Example"}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, base).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 OR event_key LIKE $2`, fmt.Sprintf("closure:%d:%%", id), fmt.Sprintf("reopen:%d:%%", id))
+	if err = db.ConfirmClosed(ctx, id, base); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+		t.Fatal(err)
+	}
+	d, err := db.Details(ctx, id)
+	if err != nil || !d.Job.Closed {
+		t.Fatalf("owner closure changed: %+v %v", d.Job, err)
+	}
+	if err = db.Reopen(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ConfirmClosedURL(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+		t.Fatal(err)
+	}
+	d, err = db.Details(ctx, id)
+	if err != nil || d.Job.Closed {
+		t.Fatalf("source closure not reopened: %+v %v", d.Job, err)
+	}
+	var count int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("reopen:%d:%%", id)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("notifications %d %v", count, err)
+	}
+	if _, err = db.ConfirmClosedURL(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1 AND state='pending'`, fmt.Sprintf("reopen:%d:%%", id)).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("stale reopen notifications %d %v", count, err)
+	}
+	if err = db.ConfirmClosed(ctx, id, base); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenJobicy(ctx, base, "https://jobicy.com/api/jobs/status?ids=1"); err != nil {
+		t.Fatal(err)
+	}
+	d, err = db.Details(ctx, id)
+	if err != nil || !d.Job.Closed {
+		t.Fatalf("owner confirmation ignored: %+v %v", d.Job, err)
+	}
+}
+
 func TestJobicyPollReservationIsSharedAcrossStoreConnections(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

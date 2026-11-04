@@ -60,6 +60,12 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.Observe(ctx, store.Observation{SourceID: a.ID, URL: a.URL, Title: "Developer", Company: "Example"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ConfirmClosedURL(ctx, a.URL, "https://jobicy.com/api/jobs/status?ids=101"); err != nil {
+		t.Fatal(err)
+	}
 	svc := New(db, func(context.Context, string) ([]collector.Job, error) { t.Fatal("unbatched fetch"); return nil, nil })
 	calls := 0
 	pageCalls := 0
@@ -75,6 +81,15 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 	})
 	if _, err = svc.Check(ctx, a.ID); err != nil {
 		t.Fatal(err)
+	}
+	jobs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, job := range jobs {
+		if job.URL == a.URL && job.Closed {
+			t.Fatal("active Jobicy vacancy remained closed")
+		}
 	}
 	if _, err = svc.Check(ctx, b.ID); err != nil {
 		t.Fatal(err)

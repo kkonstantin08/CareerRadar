@@ -135,6 +135,12 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		if checked {
 			return problem, nil
 		}
+		if status == "active" {
+			evidence := "https://jobicy.com/api/jobs/status?ids=" + jobID
+			if err = s.db.ReopenJobicy(ctx, src.URL, evidence); err != nil {
+				return "", err
+			}
+		}
 	} else if collector.IsJobicyURL(src.URL) {
 		// shortcut: one job per hourly pass, batch IDs when multiple Jobicy sources are supported.
 		allowed, err := s.db.ReserveJobicyPoll(ctx)
