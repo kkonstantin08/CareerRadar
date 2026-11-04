@@ -78,3 +78,65 @@ func TestFetchDoesNotMergeMultipleJobsWithoutURLs(t *testing.T) {
 		t.Fatalf("ambiguous jobs %+v, %v", found, err)
 	}
 }
+
+func TestJobicyClosedStatusIsExplicitAndBoundToID(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		closed     bool
+		wantErr    bool
+	}{
+		{"closed", `{"success":true,"jobs":[{"id":123,"status":"closed"}]}`, true, false},
+		{"unknown", `{"success":true,"jobs":[{"id":123,"status":"unknown"}]}`, false, true},
+		{"wrong id", `{"success":true,"jobs":[{"id":124,"status":"closed"}]}`, false, true},
+		{"failure", `{"success":false,"jobs":[{"id":123,"status":"closed"}]}`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.String() != "https://jobicy.com/api/jobs/status?ids=123" {
+					t.Fatalf("unexpected request %s", r.URL)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: r}, nil
+			})}
+			got, err := Fetch(context.Background(), client, "https://jobicy.com/jobs/123-example")
+			if (err != nil) != tc.wantErr || (len(got) == 1 && got[0].Closed) != tc.closed {
+				t.Fatalf("jobs %+v error %v", got, err)
+			}
+		})
+	}
+}
+
+func TestJobicyActiveStatusReadsVacancy(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Go developer"}</script><a href="/jobs/456-other">Other jobs</a>`
+		if r.URL.Path == "/api/jobs/status" {
+			body = `{"success":true,"jobs":[{"id":123,"status":"active"}]}`
+		} else if r.URL.Path != "/jobs/123-example" {
+			t.Fatalf("unexpected related page %s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://jobicy.com/jobs/123-example")
+	if err != nil || len(got) != 1 || got[0].Title != "Go developer" || got[0].Closed {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestJobicyRateLimitCoversAllProviderURLs(t *testing.T) {
+	for _, raw := range []string{"https://jobicy.com/jobs/123-example?utm_source=x", "https://www.jobicy.com/jobs/123", "https://JOBICY.COM:443/jobs/123", "https://jobicy.com/jobs"} {
+		if !IsJobicyURL(raw) {
+			t.Errorf("provider URL not recognized: %s", raw)
+		}
+	}
+	if IsJobicyURL("https://jobicy.com.attacker.example/jobs/123") {
+		t.Fatal("unrelated host classified as Jobicy")
+	}
+}
+
+func TestRedirectCannotBypassJobicyThrottle(t *testing.T) {
+	client := Client()
+	from, _ := http.NewRequest(http.MethodGet, "https://other.example/jobs/123", nil)
+	to, _ := http.NewRequest(http.MethodGet, "https://jobicy.com/jobs/123", nil)
+	if err := client.CheckRedirect(to, []*http.Request{from}); err == nil {
+		t.Fatal("unthrottled redirect into Jobicy accepted")
+	}
+}

@@ -27,6 +27,115 @@ func TestNextMoscowRun(t *testing.T) {
 	}
 }
 
+func TestExplicitClosureRequiresMatchingSavedJobAndSuccessfulFetch(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("closure_monitor_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	dsn = u.String()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	jobID := time.Now().UnixNano() % 1000000000000
+	jobURL := fmt.Sprintf("https://jobicy.com/jobs/%d-test", jobID)
+	sqlDB, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	defer sqlDB.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, jobURL)
+	src, err := db.AddSource(ctx, "Closure test", jobURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	if _, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: jobURL, Title: "Go", Company: "Example"}); err != nil {
+		t.Fatal(err)
+	}
+	var fetchErr error
+	resultURL := jobURL
+	svc := New(db, func(context.Context, string) ([]collector.Job, error) {
+		return []collector.Job{{URL: resultURL, SourceURL: fmt.Sprintf("https://jobicy.com/api/jobs/status?ids=%d", jobID), Closed: true}}, fetchErr
+	})
+	fetchErr = errors.New("source unavailable")
+	if _, err = svc.Check(ctx, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, job := range list {
+		if job.URL == jobURL {
+			id = job.ID
+			if job.Closed {
+				t.Fatal("failure closed a job")
+			}
+		}
+	}
+	if id == 0 {
+		t.Fatal("missing job")
+	}
+	fetchErr = nil
+	if problem, err := svc.Check(ctx, src.ID); err != nil || problem == "" {
+		t.Fatalf("missing cooldown: %q %v", problem, err)
+	}
+	if _, err = sqlDB.ExecContext(ctx, `UPDATE jobicy_poll SET polled_at=now()-interval '2 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	resultURL = jobURL + "-different"
+	if _, err = svc.Check(ctx, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	details, err := db.Details(ctx, id)
+	if err != nil || details.Job.Closed {
+		t.Fatalf("mismatched source closed job %+v: %v", details.Job, err)
+	}
+	resultURL = jobURL
+	if _, err = sqlDB.ExecContext(ctx, `UPDATE jobicy_poll SET polled_at=now()-interval '2 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Check(ctx, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	details, err = db.Details(ctx, id)
+	if err != nil || !details.Job.Closed {
+		t.Fatalf("job %+v: %v", details.Job, err)
+	}
+	if _, err = sqlDB.ExecContext(ctx, `UPDATE jobicy_poll SET polled_at=now()-interval '2 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Check(ctx, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", id)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("closure notifications %d: %v", count, err)
+	}
+	defer sqlDB.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", id))
+}
+
 func TestDailySummaryQueuedOnce(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

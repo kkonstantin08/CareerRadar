@@ -2,11 +2,35 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 )
+
+// ReserveJobicyPoll enforces Jobicy's shared one-hour automated polling interval.
+func (s *Store) ReserveJobicyPoll(ctx context.Context) (bool, error) {
+	var reserved bool
+	err := s.db.QueryRowContext(ctx, `INSERT INTO jobicy_poll(singleton,polled_at) VALUES(true,now()) ON CONFLICT(singleton) DO UPDATE SET polled_at=EXCLUDED.polled_at WHERE jobicy_poll.polled_at <= now()-interval '1 hour' RETURNING true`).Scan(&reserved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return reserved, err
+}
+
+// ConfirmClosedURL closes an already observed URL and retains the supplied evidence.
+func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (bool, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, s.ConfirmClosed(ctx, id, evidence)
+}
 
 // ConfirmClosed records the owner's confirmation and its evidence without inferring closure from errors.
 func (s *Store) ConfirmClosed(ctx context.Context, id int64, evidence string) error {

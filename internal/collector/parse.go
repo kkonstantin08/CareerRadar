@@ -15,6 +15,7 @@ import (
 
 // Job is a structured opportunity and the page on which it was observed.
 type Job struct {
+	Closed      bool
 	Title       string
 	Company     string
 	Description string
@@ -76,6 +77,11 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {
 				mode = "remote"
+				if area, ok := v["applicantLocationRequirements"].(map[string]any); ok && area["@type"] == "Country" {
+					if country, ok := area["name"].(string); ok && strings.TrimSpace(country) != "" {
+						location = country
+					}
+				}
 			}
 			offerType, level := "", ""
 			if strings.EqualFold(str("employmentType"), "INTERN") {

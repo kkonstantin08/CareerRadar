@@ -81,3 +81,7 @@ CREATE TABLE IF NOT EXISTS telegram_checks (
 );
 CREATE INDEX IF NOT EXISTS telegram_checks_pending_idx ON telegram_checks(update_id) WHERE state='pending';
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_chat_id BIGINT;
+CREATE TABLE IF NOT EXISTS jobicy_poll (
+ singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+ polled_at TIMESTAMPTZ NOT NULL
+);

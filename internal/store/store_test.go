@@ -816,6 +816,78 @@ func TestObservationRetainsDirectionAndLanguage(t *testing.T) {
 	t.Fatal("missing job")
 }
 
+func TestJobicyPollReservationIsSharedAcrossStoreConnections(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("jobicy_poll_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	dsn = u.String()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	other, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if ok, err := db.ReserveJobicyPoll(ctx); err != nil || !ok {
+		t.Fatalf("first reserve %v %v", ok, err)
+	}
+	if ok, err := other.ReserveJobicyPoll(ctx); err != nil || ok {
+		t.Fatalf("second reserve %v %v", ok, err)
+	}
+	if _, err = db.db.ExecContext(ctx, `UPDATE jobicy_poll SET polled_at=now()-interval '2 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := other.ReserveJobicyPoll(ctx); err != nil || !ok {
+		t.Fatalf("expired reserve %v %v", ok, err)
+	}
+	if _, err = db.db.ExecContext(ctx, `UPDATE jobicy_poll SET polled_at=now()-interval '2 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan bool, 2)
+	errs := make(chan error, 2)
+	for _, conn := range []*Store{db, other} {
+		go func(conn *Store) {
+			ok, err := conn.ReserveJobicyPoll(ctx)
+			results <- ok
+			errs <- err
+		}(conn)
+	}
+	winners := 0
+	for i := 0; i < 2; i++ {
+		if <-results {
+			winners++
+		}
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("concurrent reservations won: %d", winners)
+	}
+}
+
 func TestTelegramStatusAndAcknowledgementCommitTogether(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

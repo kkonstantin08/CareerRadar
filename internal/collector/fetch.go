@@ -47,6 +47,9 @@ func Client() *http.Client {
 		if req.URL.Scheme != "http" && req.URL.Scheme != "https" || req.URL.User != nil {
 			return errors.New("unsafe redirect")
 		}
+		if IsJobicyURL(req.URL.String()) && !IsJobicyURL(via[0].URL.String()) {
+			return errors.New("redirect to Jobicy requires a direct source URL")
+		}
 		return nil
 	}}
 }
@@ -73,6 +76,31 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	id := jobicyID(root)
+	if id != "" {
+		statusURL := "https://jobicy.com/api/jobs/status?ids=" + id
+		body, actual, err := readPage(ctx, client, statusURL)
+		if err != nil {
+			return nil, err
+		}
+		var response struct {
+			Success bool `json:"success"`
+			Jobs    []struct {
+				ID     json.Number `json:"id"`
+				Status string      `json:"status"`
+			} `json:"jobs"`
+		}
+		if actual != statusURL || json.Unmarshal(body, &response) != nil || !response.Success || len(response.Jobs) != 1 || response.Jobs[0].ID.String() != id {
+			return nil, errors.New("invalid Jobicy status response; source requires attention")
+		}
+		switch response.Jobs[0].Status {
+		case "closed":
+			return []Job{{URL: root.String(), SourceURL: statusURL, Closed: true}}, nil
+		case "active":
+		default:
+			return nil, errors.New("Jobicy status unknown; source requires attention")
+		}
+	}
 	if api := greenhouseURL(root); api != "" {
 		body, _, err := readPage(ctx, client, api)
 		if err != nil {
@@ -111,7 +139,7 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 			}
 			found = append(found, j)
 		}
-		if current.depth >= 2 {
+		if current.depth >= 2 || id != "" {
 			continue
 		}
 		base, err := url.Parse(actual)
@@ -131,6 +159,32 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 		problem = errors.New("no structured vacancies found; source requires attention")
 	}
 	return found, problem
+}
+
+func jobicyID(u *url.URL) string {
+	if u.Scheme != "https" || u.Host != "jobicy.com" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] != "jobs" {
+		return ""
+	}
+	id, _, _ := strings.Cut(parts[1], "-")
+	n, err := strconv.ParseUint(id, 10, 53)
+	if err != nil || n == 0 || strconv.FormatUint(n, 10) != id {
+		return ""
+	}
+	return id
+}
+
+// IsJobicyURL reports whether a URL belongs to Jobicy.
+func IsJobicyURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == "jobicy.com" || strings.HasSuffix(host, ".jobicy.com")
 }
 
 func readPage(ctx context.Context, client *http.Client, uri string) ([]byte, string, error) {

@@ -58,12 +58,40 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		return "", ctx.Err()
 	}
 	defer func() { <-s.limit }()
+	if collector.IsJobicyURL(src.URL) {
+		// shortcut: one job per hourly pass, batch IDs when multiple Jobicy sources are supported.
+		allowed, err := s.db.ReserveJobicyPoll(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !allowed {
+			problem := "Jobicy permits one synchronization per hour; check deferred"
+			if err = s.db.RecordCheck(ctx, src.ID, problem); err != nil {
+				return "", err
+			}
+			return problem, nil
+		}
+	}
 	found, fetchErr := s.fetch(ctx, src.URL)
 	problem := ""
 	if fetchErr != nil {
 		problem = fetchErr.Error()
 	}
 	for _, job := range found {
+		if job.Closed {
+			if fetchErr != nil || job.URL != src.URL {
+				problem = "Closure evidence could not be verified"
+				continue
+			}
+			ok, err := s.db.ConfirmClosedURL(ctx, job.URL, job.SourceURL)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				problem = "Closed vacancy was not previously observed"
+			}
+			continue
+		}
 		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "") {
 			problem = "Vacancy details require clarification"
 		}
