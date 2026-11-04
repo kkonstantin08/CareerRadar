@@ -34,6 +34,9 @@ type Job struct {
 }
 
 var weeklyHours = regexp.MustCompile(`(?i)^\s*(\d{1,3})\s*(?:hours? per week|hours? a week|час(?:ов|а)? в неделю)\s*$`)
+var levelInTitle = regexp.MustCompile(`(?i)\b(intern|junior|senior)\b`)
+var middleRole = regexp.MustCompile(`(?i)\bmiddle[\s-]+(?:(?:go|python|java|backend|frontend|fullstack|software|qa|devops)[\s-]+)?(?:developer|engineer|programmer)\b`)
+var mixedMiddle = regexp.MustCompile(`(?i)\bmiddle(?:\s*[-/|–—]\s*|\s+to\s+)(?:junior|senior)\b`)
 
 // Parse extracts schema.org JobPosting records from HTML without inferring facts.
 func Parse(r io.Reader, sourceURL string) ([]Job, error) {
@@ -83,10 +86,15 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 					}
 				}
 			}
-			offerType, level := "", ""
+			offerType := ""
+			level, ambiguous := titleLevel(str("title"))
 			if strings.EqualFold(str("employmentType"), "INTERN") {
 				offerType = "Internship"
-				level = "Intern"
+				if !ambiguous && (level == "" || level == "Intern") {
+					level = "Intern"
+				} else {
+					level = ""
+				}
 			}
 			var hours *int
 			if m := weeklyHours.FindStringSubmatch(str("workHours")); len(m) == 2 {
@@ -149,6 +157,24 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	}
 	walk(doc)
 	return result, nil
+}
+
+func titleLevel(title string) (string, bool) {
+	level := ""
+	if mixedMiddle.MatchString(title) {
+		return "", true
+	}
+	if middleRole.MatchString(title) {
+		level = "Middle"
+	}
+	for _, match := range levelInTitle.FindAllString(title, -1) {
+		found := recognized(match, []string{"Intern", "Junior", "Middle", "Senior"})
+		if level != "" && level != found {
+			return "", true
+		}
+		level = found
+	}
+	return level, false
 }
 
 func contains(values []string, value string) bool {

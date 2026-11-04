@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/kkonstantin08/CareerRadar/internal/discovery"
@@ -815,6 +816,84 @@ func TestObservationRetainsDirectionAndLanguage(t *testing.T) {
 		}
 	}
 	t.Fatal("missing job")
+}
+
+func TestChangedTitleDoesNotRetainUnconfirmedLevel(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://level-change.example/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Level", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Senior Engineer", Level: "Senior"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	var level string
+	if err = db.db.QueryRowContext(ctx, `SELECT id,level FROM jobs WHERE url=$1`, base).Scan(&id, &level); err != nil || level != "" {
+		t.Fatalf("stale level %q %v", level, err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
+	details, err := db.Details(ctx, id)
+	if err != nil || len(details.History) < 2 {
+		t.Fatalf("history %+v %v", details.History, err)
+	}
+	previousLevel := false
+	for _, revision := range details.History {
+		var snapshot map[string]any
+		if json.Unmarshal(revision.Snapshot, &snapshot) == nil && snapshot["level"] == "Senior" {
+			previousLevel = true
+		}
+	}
+	if !previousLevel {
+		t.Fatal("previous level absent from history")
+	}
+}
+
+func TestChangedTitleRetainsExplicitInternship(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://internship-change.example/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Intern", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Engineering internship", Type: "Internship", Level: "Intern"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base, Title: "Engineering program"}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	var level string
+	if err = db.db.QueryRowContext(ctx, `SELECT id,level FROM jobs WHERE url=$1`, base).Scan(&id, &level); err != nil || level != "Intern" {
+		t.Fatalf("explicit level lost: %q %v", level, err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
 }
 
 func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {

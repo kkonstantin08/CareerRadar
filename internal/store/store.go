@@ -183,10 +183,14 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
+	// A changed title can invalidate a title-derived level; explicit internships remain known.
+	if x.Level == "" && (x.Title == "" || x.Title == old.Title || old.Level == "Intern" && old.Type == "Internship" && (x.Type == "" || x.Type == "Internship")) {
+		x.Level = old.Level
+	}
 	for _, pair := range []struct {
 		current  *string
 		previous string
-	}{{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description}, {&x.Deadline, old.Deadline}, {&x.Location, old.Location}, {&x.WorkMode, old.WorkMode}, {&x.Type, old.Type}, {&x.Level, old.Level}, {&x.Direction, old.Direction}, {&x.Language, old.Language}} {
+	}{{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description}, {&x.Deadline, old.Deadline}, {&x.Location, old.Location}, {&x.WorkMode, old.WorkMode}, {&x.Type, old.Type}, {&x.Direction, old.Direction}, {&x.Language, old.Language}} {
 		if *pair.current == "" {
 			*pair.current = pair.previous
 		}

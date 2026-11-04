@@ -44,6 +44,11 @@ const (
 func (p Preferences) Match(j Job) Match {
 	unknown := false
 	location := j.Location
+	locations := make([]string, len(p.Locations))
+	for i, value := range p.Locations {
+		locations[i] = normalizeLocation(value)
+	}
+	location = normalizeLocation(location)
 	// Broad remote regions do not establish eligibility for a specific country.
 	if len(p.Locations) > 0 && (strings.EqualFold(strings.TrimSpace(location), "worldwide") || strings.EqualFold(strings.TrimSpace(location), "anywhere")) {
 		location = ""
@@ -52,7 +57,7 @@ func (p Preferences) Match(j Job) Match {
 		value   string
 		allowed []string
 	}{
-		{j.Level, p.Levels}, {j.Direction, p.Directions}, {location, p.Locations}, {j.Type, p.Types}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
+		{j.Level, p.Levels}, {j.Direction, p.Directions}, {location, locations}, {j.Type, p.Types}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
 	} {
 		if len(field.allowed) == 0 {
 			continue
@@ -107,4 +112,17 @@ func (p Preferences) Match(j Job) Match {
 		return NeedsClarification
 	}
 	return Suitable
+}
+
+func normalizeLocation(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "russia", "russian federation", "ru", "рф", "россия", "российская федерация":
+		return "россия"
+	case "kazan", "казань":
+		return "казань"
+	case "innopolis", "иннополис":
+		return "иннополис"
+	default:
+		return strings.TrimSpace(value)
+	}
 }

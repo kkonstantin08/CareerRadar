@@ -52,6 +52,31 @@ func TestWorldwideLocationDoesNotProveCountryEligibility(t *testing.T) {
 	}
 }
 
+func TestGeographyMatchesCommonEnglishAndRussianNames(t *testing.T) {
+	for _, tc := range []struct{ preference, location string }{
+		{"Россия", "Russia"}, {"Россия", "RU"}, {"Казань", "Kazan"}, {"Иннополис", "Innopolis"},
+	} {
+		p := Preferences{Locations: []string{tc.preference}}
+		if got := p.Match(Job{Location: tc.location}); got != Suitable {
+			t.Errorf("%s / %s: %s", tc.preference, tc.location, got)
+		}
+	}
+}
+
+func TestUnspecifiedLevelCanBeSelected(t *testing.T) {
+	p := Preferences{Levels: []string{"Не указан"}}
+	if got := p.Match(Job{}); got != NeedsClarification {
+		t.Fatalf("unspecified selected: %s", got)
+	}
+	if got := p.Match(Job{Level: "Junior"}); got != Unsuitable {
+		t.Fatalf("known level not selected: %s", got)
+	}
+	p.Levels = []string{"Junior"}
+	if got := p.Match(Job{}); got != NeedsClarification {
+		t.Fatalf("unknown must remain visible: %s", got)
+	}
+}
+
 func TestMatchMultiplePublishedLanguages(t *testing.T) {
 	p := Preferences{Languages: []string{"Python"}}
 	if got := p.Match(Job{Language: "Go, Python"}); got != Suitable {

@@ -54,6 +54,27 @@ func TestExplicitInternshipType(t *testing.T) {
 	}
 }
 
+func TestTitleExplicitLevelAndAmbiguousLevel(t *testing.T) {
+	for _, tc := range []struct{ title, want string }{
+		{"Senior Go Developer", "Senior"}, {"Junior backend engineer", "Junior"}, {"Intern Python", "Intern"}, {"Middle Go Developer", "Middle"}, {"Middle / Senior engineer", ""}, {"Middle-Senior Engineer", ""}, {"Middle to Senior Engineer", ""},
+		{"Junior / Senior engineer", ""}, {"Seniorist engineer", ""}, {"Middle Office Developer", ""}, {"Middle East Developer", ""}, {"Middle Market Developer", ""}, {"Senior Middle Office Developer", "Senior"},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","title":"` + tc.title + `"}</script>`
+		got, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(got) != 1 || got[0].Level != tc.want {
+			t.Errorf("%s: %+v %v", tc.title, got, err)
+		}
+	}
+}
+
+func TestConflictingTitleAndInternshipLevelRemainUnknown(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","employmentType":"INTERN"}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(got) != 1 || got[0].Level != "" {
+		t.Fatalf("conflicting level: %+v %v", got, err)
+	}
+}
+
 func TestParseExplicitMonthlySalaryAndWeeklyHours(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Intern","workHours":"20 hours per week","baseSalary":{"currency":"RUB","value":{"value":70000,"unitText":"MONTH"}}}</script>`
 	got, err := Parse(strings.NewReader(body), "https://example.org/job")

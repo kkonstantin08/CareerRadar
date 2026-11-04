@@ -48,3 +48,7 @@ GPT-6 Luna (High) identified that an owner's confirmation of an already closed l
 ## Follow-up review: Jobicy URL identity
 
 GPT-6 Luna (High) identified duplicate records and missing closure updates for legacy URL variants and changed slugs. The lookup now uses the Jobicy ID, preserves the existing record and refuses ambiguous pre-existing duplicates. Follow-up review identified a missing evidence-ID check on closure and test notification cleanup; both were fixed. Tests were run by the implementing agent, not the reviewer.
+
+## Follow-up review: level extraction
+
+GPT-6 Luna (High) identified that `Middle Office` could be misclassified as career level Middle and that a derived level could remain after a title change. Follow-up review found the same ambiguity in `Middle East`, that clearing the level could discard an explicitly observed internship, and that `Middle-Senior` ranges could be classified as Senior. Middle now requires a recognized role context; common mixed-level expressions remain unknown. An unconfirmed level is cleared when the title changes and remains in history, while a previously observed internship retains Intern. Regression tests cover these cases. This is an interim review and does not establish complete filter coverage.
