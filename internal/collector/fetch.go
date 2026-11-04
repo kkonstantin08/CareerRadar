@@ -127,7 +127,7 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		return parseGreenhouse(body, root.String())
 	}
 	if api := ashbyURL(root); api != "" {
-		body, actual, err := readPage(ctx, client, api)
+		body, actual, err := readPageLimit(ctx, client, api, 8<<20)
 		if err != nil {
 			return nil, err
 		}
@@ -304,6 +304,10 @@ func IsJobicyURL(raw string) bool {
 var errResponseTooLarge = errors.New("source response too large")
 
 func readPage(ctx context.Context, client *http.Client, uri string) ([]byte, string, error) {
+	return readPageLimit(ctx, client, uri, 2<<20)
+}
+
+func readPageLimit(ctx context.Context, client *http.Client, uri string, limit int64) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, "", err
@@ -317,12 +321,11 @@ func readPage(ctx context.Context, client *http.Client, uri string) ([]byte, str
 	if res.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("source returned HTTP %s", strconv.Itoa(res.StatusCode))
 	}
-	const limit = 2 << 20
 	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
 		return nil, "", err
 	}
-	if len(body) > limit {
+	if int64(len(body)) > limit {
 		return nil, "", errResponseTooLarge
 	}
 	actual := uri

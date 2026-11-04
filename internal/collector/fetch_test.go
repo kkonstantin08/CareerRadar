@@ -76,6 +76,27 @@ func TestAshbyIncompleteListingsPreserveValidJobs(t *testing.T) {
 	}
 }
 
+func TestAshbySupportsBoundedLargerBoard(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"jobs":[{"title":"Engineer","isListed":true,"descriptionPlain":"` + strings.Repeat("x", (2<<20)+1) + `","jobUrl":"https://jobs.ashbyhq.com/example/1"}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://jobs.ashbyhq.com/example")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("jobs %d error %v", len(got), err)
+	}
+}
+
+func TestAshbyRejectsResponseBeyondLimit(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", (8<<20)+1))), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://jobs.ashbyhq.com/example")
+	if err == nil || len(got) != 0 {
+		t.Fatalf("jobs %d error %v", len(got), err)
+	}
+}
+
 func TestGreenhouseBoardIncludesJobDescriptions(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/v1/boards/example/jobs" || r.URL.Query().Get("content") != "true" {
