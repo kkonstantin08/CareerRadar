@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ type Observation struct {
 	WorkMode    string `json:"work_mode"`
 	Type        string `json:"type"`
 	Level       string `json:"level"`
+	Hours       *int   `json:"hours"`
+	Salary      *int64 `json:"salary"`
+	Currency    string `json:"currency"`
 }
 
 // Job includes a persisted observation and its application status.
@@ -49,6 +53,7 @@ type Job struct {
 	Observation
 	ID     int64  `json:"id"`
 	Status string `json:"status"`
+	Closed bool   `json:"closed"`
 }
 
 // Open connects to PostgreSQL and creates the initial schema if necessary.
@@ -151,7 +156,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	}
 	var id int64
 	var old Observation
-	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level)
+	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level, &old.Hours, &old.Salary, &old.Currency)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
@@ -163,9 +168,19 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 			*pair.current = pair.previous
 		}
 	}
-	changed := errors.Is(err, sql.ErrNoRows) || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level
+	if x.Hours == nil {
+		x.Hours = old.Hours
+	}
+	if x.Salary == nil {
+		x.Salary = old.Salary
+		x.Currency = old.Currency
+	}
+	if x.Salary != nil && x.Currency == "" {
+		return false, errors.New("salary currency required")
+	}
+	changed := !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || x.Currency != old.Currency || errors.Is(err, sql.ErrNoRows) || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level
 	if changed {
-		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level).Scan(&id)
+		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,weekly_hours=EXCLUDED.weekly_hours,monthly_salary=EXCLUDED.monthly_salary,salary_currency=EXCLUDED.salary_currency,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level, x.Hours, x.Salary, x.Currency).Scan(&id)
 		if err != nil {
 			return false, err
 		}
@@ -181,7 +196,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if prefs.Match(jobs.Job{Company: x.Company, Location: x.Location, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level}) != jobs.Unsuitable {
+		if prefs.Match(jobs.Job{Company: x.Company, Location: x.Location, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level, Hours: x.Hours, Salary: x.Salary, Currency: x.Currency}) != jobs.Unsuitable {
 			message := fmt.Sprintf("Вакансия: %s\nКомпания: %s\nДедлайн: %s\n%s", x.Title, x.Company, x.Deadline, x.URL)
 			if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("job:%d:revision:%d", id, revision), message); err != nil {
 				return false, err
@@ -231,7 +246,7 @@ func (s *Store) RecordCheck(ctx context.Context, sourceID int64, problem string)
 
 // Jobs lists stored jobs, newest first.
 func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level FROM jobs ORDER BY updated_at DESC,id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed FROM jobs ORDER BY updated_at DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +254,7 @@ func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
 	xs := []Job{}
 	for rows.Next() {
 		var x Job
-		if err := rows.Scan(&x.ID, &x.SourceID, &x.URL, &x.Title, &x.Company, &x.Description, &x.Deadline, &x.Status, &x.Location, &x.WorkMode, &x.Type, &x.Level); err != nil {
+		if err := rows.Scan(&x.ID, &x.SourceID, &x.URL, &x.Title, &x.Company, &x.Description, &x.Deadline, &x.Status, &x.Location, &x.WorkMode, &x.Type, &x.Level, &x.Hours, &x.Salary, &x.Currency, &x.Closed); err != nil {
 			return nil, err
 		}
 		xs = append(xs, x)
@@ -249,7 +264,7 @@ func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
 
 // UpdateSource changes source settings without modifying collected jobs.
 func (s *Store) UpdateSource(ctx context.Context, id int64, name, url string, enabled bool) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE sources SET name=$2,url=$3,enabled=$4 WHERE id=$1`, id, name, url, enabled)
+	result, err := s.db.ExecContext(ctx, `UPDATE sources SET name=$2,enabled=CASE WHEN url<>$3 THEN false ELSE $4 END,url=$3 WHERE id=$1`, id, name, url, enabled)
 	if err != nil {
 		return err
 	}

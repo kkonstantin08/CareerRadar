@@ -16,6 +16,73 @@
         "type": "http",
         "scheme": "basic"
       }
+    },
+    "schemas": {
+      "Job": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "page_url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "deadline": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "work_mode": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hours": {
+            "type": "integer",
+            "nullable": true
+          },
+          "salary": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "description": "Monthly amount in currency"
+          },
+          "closed": {
+            "type": "boolean"
+          }
+        }
+      }
     }
   },
   "paths": {
@@ -230,7 +297,17 @@
         "summary": "List opportunities",
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Job"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid input"
@@ -432,10 +509,114 @@
         ],
         "responses": {
           "200": {
-            "description": "Job details"
+            "description": "Job details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "job": {
+                      "$ref": "#/components/schemas/Job"
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "snapshot": {
+                            "type": "object"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/close": {
+      "post": {
+        "summary": "Record owner-confirmed closure with evidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "evidence"
+                ],
+                "properties": {
+                  "evidence": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed"
+          },
+          "400": {
+            "description": "Invalid evidence"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/reopen": {
+      "post": {
+        "summary": "Remove an incorrect or outdated closure confirmation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Closure removed"
+          },
+          "404": {
+            "description": "Job not found"
           }
         }
       }

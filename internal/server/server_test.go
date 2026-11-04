@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -554,4 +555,96 @@ func TestImportSourcesSheetCSV(t *testing.T) {
 		}
 	}
 	t.Fatal("source missing")
+}
+
+func TestCatalogFiltersExplicitHoursAndSalary(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://hoursfilter.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Hours filter", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	hours := 40
+	salary := int64(70000)
+	_, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: base + "/job", Title: "Engineer", Hours: &hours, Salary: &salary, Currency: "RUB"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	max := 30
+	if err = db.SavePreferences(ctx, jobs.Preferences{MaxHours: &max}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	if w.Code != 200 || strings.Contains(w.Body.String(), base+"/job") {
+		t.Fatalf("catalog %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOwnerConfirmsClosureWithEvidence(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://close-api.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Close", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	if _, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: base + "/job", Title: "Intern"}); err != nil {
+		t.Fatal(err)
+	}
+	xs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, x := range xs {
+		if x.URL == base+"/job" {
+			id = x.ID
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/jobs/%d/close", id), strings.NewReader(fmt.Sprintf(`{"evidence":%q}`, base+"/job")))
+	req.SetBasicAuth("owner", "secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("close %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOpenAPIDocumentsJobFields(t *testing.T) {
+	var doc map[string]any
+	if err := json.Unmarshal(openAPI, &doc); err != nil {
+		t.Fatal(err)
+	}
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	job := schemas["Job"].(map[string]any)
+	fields := job["properties"].(map[string]any)
+	for _, name := range []string{"hours", "salary", "currency", "closed"} {
+		if _, ok := fields[name]; !ok {
+			t.Errorf("missing %s", name)
+		}
+	}
 }

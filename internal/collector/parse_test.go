@@ -45,3 +45,14 @@ func TestExplicitInternshipType(t *testing.T) {
 		t.Fatalf("job %+v", jobs[0])
 	}
 }
+
+func TestParseExplicitMonthlySalaryAndWeeklyHours(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Intern","workHours":"20 hours per week","baseSalary":{"currency":"RUB","value":{"value":70000,"unitText":"MONTH"}}}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("jobs: %+v %v", got, err)
+	}
+	if got[0].Hours == nil || *got[0].Hours != 20 || got[0].Salary == nil || *got[0].Salary != 70000 || got[0].Currency != "RUB" {
+		t.Fatalf("fields: %+v", got[0])
+	}
+}

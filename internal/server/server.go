@@ -267,7 +267,7 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 			Match jobs.Match `json:"match"`
 		}, 0, len(xs))
 		for _, j := range xs {
-			match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level})
+			match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Hours: j.Hours, Salary: j.Salary, Currency: j.Currency})
 			if match != jobs.Unsuitable {
 				result = append(result, struct {
 					store.Job
@@ -293,6 +293,51 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 			return
 		}
 		writeJSON(w, 200, d)
+	})
+	mux.HandleFunc("POST /api/jobs/{id}/reopen", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid ID", 400)
+			return
+		}
+		if err = db.Reopen(r.Context(), id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+			} else {
+				http.Error(w, "database error", 500)
+			}
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"closed": false})
+	})
+	mux.HandleFunc("POST /api/jobs/{id}/close", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid ID", 400)
+			return
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			http.Error(w, "expected application/json", 415)
+			return
+		}
+		var input struct {
+			Evidence string `json:"evidence"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&input) != nil || !publicURL(input.Evidence) {
+			http.Error(w, "valid evidence URL required", 400)
+			return
+		}
+		if err = db.ConfirmClosed(r.Context(), id, input.Evidence); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+			} else {
+				http.Error(w, "database error", 500)
+			}
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"closed": true})
 	})
 	mux.HandleFunc("PUT /api/jobs/{id}/status", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

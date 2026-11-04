@@ -12,7 +12,7 @@ A work-in-progress personal IT opportunity tracker built with Go and PostgreSQL.
 - Preserve observed facts when a later observation is incomplete; retain source evidence and change snapshots, and distinguish source errors from confirmed closure.
 - Schedule enabled-source checks at 08:00 Europe/Moscow with up to two checks concurrently. Missed runs are not backfilled.
 - View jobs, source health and check history in a Russian web interface; change application status and preferences. The current collector extracts only some fields used by filters.
-- Link a private Telegram chat with an expiring one-use code. The bot supports `/jobs`, `/sources`, `/add`, `/confirm`, `/check`, `/status` and `/help`. New or changed jobs, changed source warnings and daily summaries are queued in PostgreSQL. Uncertain delivery is not retried automatically.
+- Link a private Telegram chat with an expiring one-use code. The bot supports `/jobs`, `/sources`, `/add`, `/confirm`, `/disable`, `/edit`, `/delete`, `/check`, `/status` and `/help`. New or changed jobs, changed source warnings and daily summaries are queued in PostgreSQL. Uncertain delivery is not retried automatically.
 - Serve an authenticated REST API, OpenAPI document and Swagger UI.
 
 ## Stack and architecture
@@ -97,8 +97,8 @@ SMOKE_SOURCE_URL='https://boards.greenhouse.io/COMPANY/jobs/JOB_ID' go test ./in
 - The crawler is bounded by time, depth, page count and response size. Greenhouse listings may lack full job details. A failed or incomplete check does not close or delete jobs.
 - Remotive results are delayed by the provider, are limited to remote jobs and may not be suitable for the user's geography. Search results are not yet saved to the catalog or linked automatically to a company source.
 - Company discovery depends on Wikidata and homepage links and can return ambiguous candidates. Always verify a candidate before enabling it.
-- Only a subset of attributes is extracted and applied to catalog filtering. Level, language, workload, compensation, program type and other fields are not yet extracted from all sources. Geographic matching is exact.
-- Deduplication removes URL fragments and UTM parameters but does not merge distinct canonical URLs. Confirmed closure detection is not implemented.
-- The interface does not yet include every requested management action; a desktop catalog view was visually inspected, but mobile and the latest changes have not been visually verified.
+- Only a subset of attributes is extracted and applied to catalog filtering. Level, language, workload, compensation, program type and other fields are not yet extracted from all sources. Exact weekly hours and exact monthly salaries are read only when explicitly structured in supported JSON-LD. Geographic matching is exact.
+- Deduplication removes URL fragments and UTM parameters but does not merge distinct canonical URLs. Owners can record and undo a confirmed closure with an evidence link; automated confirmation of closures is not implemented.
+- The interface does not yet include every requested management action; the catalog was visually inspected at desktop and 390 px widths; other mobile workflows have not been fully verified.
 - The delivery queue does not automatically retry a send with an uncertain result; a notification interrupted during sending requires investigation. There is no interface for resolving uncertain notifications yet. Processed Telegram update IDs are persisted before command execution, so a crash at that point can leave an update unprocessed.
-- The automated checks do not replace a real Telegram end-to-end test, a clean-machine deployment test, or the requested final independent audit.
+- The automated checks do not replace a real Telegram end-to-end test, a clean-machine deployment test, or resolution of the outstanding findings in [the independent audit](docs/review.md).

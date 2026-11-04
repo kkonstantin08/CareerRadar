@@ -438,3 +438,183 @@ func TestTelegramUpdatesAreClaimedOnce(t *testing.T) {
 		t.Fatalf("again %v %v", again, err)
 	}
 }
+
+func TestObservationPreservesSalaryAndHours(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://hours.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Hours", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base+"/job")
+	hours := 20
+	salary := int64(70000)
+	x := Observation{SourceID: src.ID, URL: base + "/job", Title: "Intern", Hours: &hours, Salary: &salary, Currency: "RUB"}
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	x.Hours = nil
+	x.Salary = nil
+	x.Currency = ""
+	if changed, err := db.Observe(ctx, x); err != nil || changed {
+		t.Fatalf("repeat %v %v", changed, err)
+	}
+	list, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range list {
+		if j.URL == x.URL {
+			if j.Hours == nil || *j.Hours != 20 || j.Salary == nil || *j.Salary != 70000 || j.Currency != "RUB" {
+				t.Fatalf("job %+v", j)
+			}
+			return
+		}
+	}
+	t.Fatal("job missing")
+}
+
+func TestChangingSourceURLRequiresConfirmation(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://changed.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Example", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	if err = db.UpdateSource(ctx, src.ID, "Example", base+"/new", true); err != nil {
+		t.Fatal(err)
+	}
+	xs, err := db.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range xs {
+		if x.ID == src.ID {
+			if x.Enabled {
+				t.Fatal("new URL enabled without confirmation")
+			}
+			return
+		}
+	}
+	t.Fatal("source missing")
+}
+
+func TestConfirmedClosureRequiresEvidenceAndIsIdempotent(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://closure.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Closure", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base+"/job")
+	_, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base + "/job", Title: "Intern"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	xs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, x := range xs {
+		if x.URL == base+"/job" {
+			id = x.ID
+		}
+	}
+	if id == 0 {
+		t.Fatal("job missing")
+	}
+	if err = db.ConfirmClosed(ctx, id, ""); err == nil {
+		t.Fatal("missing evidence accepted")
+	}
+	if err = db.ConfirmClosed(ctx, id, base+"/job"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ConfirmClosed(ctx, id, base+"/job"); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := db.Details(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Job.Closed {
+		t.Fatal("closure not saved")
+	}
+	var n int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", id)).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("notifications %d %v", n, err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", id))
+}
+
+func TestOwnerCanCorrectClosedStatus(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://reopen.example.org/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Reopen", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: base + "/job", Title: "Intern"}); err != nil {
+		t.Fatal(err)
+	}
+	xs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range xs {
+		if x.URL == base+"/job" {
+			if err = db.ConfirmClosed(ctx, x.ID, x.URL); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Reopen(ctx, x.ID); err != nil {
+				t.Fatal(err)
+			}
+			d, err := db.Details(ctx, x.ID)
+			if err != nil || d.Job.Closed {
+				t.Fatalf("detail %+v %v", d, err)
+			}
+			return
+		}
+	}
+	t.Fatal("job missing")
+}

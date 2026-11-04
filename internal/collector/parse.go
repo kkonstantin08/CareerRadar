@@ -4,6 +4,9 @@ package collector
 import (
 	"encoding/json"
 	"io"
+	"math"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -21,7 +24,12 @@ type Job struct {
 	WorkMode    string
 	Type        string
 	Level       string
+	Hours       *int
+	Salary      *int64
+	Currency    string
 }
+
+var weeklyHours = regexp.MustCompile(`(?i)^\s*(\d{1,3})\s*(?:hours? per week|hours? a week|час(?:ов|а)? в неделю)\s*$`)
 
 // Parse extracts schema.org JobPosting records from HTML without inferring facts.
 func Parse(r io.Reader, sourceURL string) ([]Job, error) {
@@ -64,7 +72,27 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				offerType = "Internship"
 				level = "Intern"
 			}
-			result = append(result, Job{Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
+			var hours *int
+			if m := weeklyHours.FindStringSubmatch(str("workHours")); len(m) == 2 {
+				if n, e := strconv.Atoi(m[1]); e == nil && n <= 168 {
+					hours = &n
+				}
+			}
+			var salary *int64
+			currency := ""
+			if base, ok := v["baseSalary"].(map[string]any); ok {
+				c, _ := base["currency"].(string)
+				if value, ok := base["value"].(map[string]any); ok {
+					unit, _ := value["unitText"].(string)
+					n, ok := value["value"].(float64)
+					if ok && strings.EqualFold(unit, "MONTH") && c != "" && n >= 0 && n <= float64(math.MaxInt64/2) && n == math.Trunc(n) {
+						amount := int64(n)
+						salary = &amount
+						currency = c
+					}
+				}
+			}
+			result = append(result, Job{Hours: hours, Salary: salary, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)

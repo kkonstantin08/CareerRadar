@@ -68,7 +68,7 @@ func (b *Bot) Handle(ctx context.Context, m Message) string {
 		return ""
 	}
 	if parts[0] == "/help" || parts[0] == "/start" {
-		return "Команды: /jobs, /sources, /add URL название, /confirm ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ."
+		return "Команды: /jobs, /sources, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ."
 	}
 	data, ok := b.links.(dataStore)
 	if !ok {
@@ -86,7 +86,7 @@ func (b *Bot) Handle(ctx context.Context, m Message) string {
 		}
 		var out strings.Builder
 		for _, j := range list {
-			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level}) == jobs.Unsuitable {
+			if prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Hours: j.Hours, Salary: j.Salary, Currency: j.Currency}) == jobs.Unsuitable {
 				continue
 			}
 			line := fmt.Sprintf("%d · %s · %s\n%s\n", j.ID, j.Title, j.Company, j.URL)
@@ -147,6 +147,50 @@ func (b *Bot) Handle(ctx context.Context, m Message) string {
 					return "Не удалось подтвердить источник."
 				}
 				return "Источник включён."
+			}
+		}
+		return "Источник не найден."
+	case "/disable", "/edit", "/delete":
+		if len(parts) < 2 {
+			return "Укажите ID источника."
+		}
+		id, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return "Некорректный ID."
+		}
+		list, err := data.Sources(ctx)
+		if err != nil {
+			return "Не удалось загрузить источники."
+		}
+		for _, s := range list {
+			if s.ID != id {
+				continue
+			}
+			switch parts[0] {
+			case "/disable":
+				if err = data.UpdateSource(ctx, id, s.Name, s.URL, false); err != nil {
+					return "Не удалось выключить источник."
+				}
+				return "Источник выключен."
+			case "/edit":
+				if len(parts) < 4 {
+					return "Используйте /edit ID URL название"
+				}
+				u, e := url.Parse(parts[2])
+				if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {
+					return "Некорректный URL."
+				}
+				if err = data.UpdateSource(ctx, id, strings.Join(parts[3:], " "), u.String(), false); err != nil {
+					return "Не удалось изменить источник."
+				}
+				return "Источник изменён и выключен до повторного подтверждения."
+			case "/delete":
+				if deleter, ok := b.links.(interface {
+					DeleteSource(context.Context, int64) error
+				}); !ok || deleter.DeleteSource(ctx, id) != nil {
+					return "Не удалось удалить источник."
+				}
+				return "Источник удалён; вакансии сохранены."
 			}
 		}
 		return "Источник не найден."
