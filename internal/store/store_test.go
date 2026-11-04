@@ -792,7 +792,7 @@ func TestObservationRetainsDirectionAndLanguage(t *testing.T) {
 	}
 	defer db.DeleteSource(ctx, src.ID)
 	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base+"/job")
-	x := Observation{SourceID: src.ID, URL: base + "/job", Direction: "Backend", Language: "Go"}
+	x := Observation{SourceID: src.ID, URL: base + "/job", Direction: "Backend", Language: "Go, Python"}
 	if _, err = db.Observe(ctx, x); err != nil {
 		t.Fatal(err)
 	}
@@ -807,7 +807,7 @@ func TestObservationRetainsDirectionAndLanguage(t *testing.T) {
 	}
 	for _, j := range list {
 		if j.URL == x.URL {
-			if j.Direction != "Backend" || j.Language != "Go" {
+			if j.Direction != "Backend" || j.Language != "Go, Python" {
 				t.Fatalf("job %+v", j)
 			}
 			return

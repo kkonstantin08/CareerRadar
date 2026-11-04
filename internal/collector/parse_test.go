@@ -86,10 +86,18 @@ func TestSkillsExtractOneLanguageAmongOtherSkills(t *testing.T) {
 		t.Fatalf("jobs %+v %v", found, err)
 	}
 }
-func TestMultipleLanguagesRemainUnknown(t *testing.T) {
+func TestMultipleLanguagesAreRetained(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","skills":["Go","Python"]}</script>`
 	found, err := Parse(strings.NewReader(body), "https://example.org/job")
-	if err != nil || len(found) != 1 || found[0].Language != "" {
+	if err != nil || len(found) != 1 || found[0].Language != "Go, Python" {
+		t.Fatalf("jobs %+v %v", found, err)
+	}
+}
+
+func TestJobPostingInTypeArray(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":["Thing","JobPosting"],"title":"Engineer"}</script>`
+	found, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(found) != 1 || found[0].Title != "Engineer" {
 		t.Fatalf("jobs %+v %v", found, err)
 	}
 }

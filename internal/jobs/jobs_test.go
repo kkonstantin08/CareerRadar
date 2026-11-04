@@ -51,3 +51,13 @@ func TestWorldwideLocationDoesNotProveCountryEligibility(t *testing.T) {
 		t.Fatalf("worldwide eligibility must remain unknown: %s", got)
 	}
 }
+
+func TestMatchMultiplePublishedLanguages(t *testing.T) {
+	p := Preferences{Languages: []string{"Python"}}
+	if got := p.Match(Job{Language: "Go, Python"}); got != Suitable {
+		t.Fatalf("published Python should match: %s", got)
+	}
+	if got := p.Match(Job{Language: "Go, Java"}); got != Unsuitable {
+		t.Fatalf("published languages do not match: %s", got)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -51,8 +52,15 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if graph, ok := v["@graph"]; ok {
 				extract(graph)
 			}
-			typ, _ := v["@type"].(string)
-			if typ != "JobPosting" {
+			posting := v["@type"] == "JobPosting"
+			if types, ok := v["@type"].([]any); ok {
+				for _, typ := range types {
+					if typ == "JobPosting" {
+						posting = true
+					}
+				}
+			}
+			if !posting {
 				return
 			}
 			str := func(key string) string { s, _ := v[key].(string); return s }
@@ -95,7 +103,7 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				}
 			}
 			direction := recognized(str("occupationalCategory"), []string{"Backend", "Frontend", "Fullstack", "AI/ML/DS", "Data Engineering", "DevOps", "QA Automation"})
-			language := ""
+			var languages []string
 			values, ok := v["skills"].([]any)
 			if !ok {
 				if value, ok := v["skills"].(string); ok {
@@ -108,12 +116,12 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				if found == "" {
 					continue
 				}
-				if language != "" && language != found {
-					language = ""
-					break
+				if !contains(languages, found) {
+					languages = append(languages, found)
 				}
-				language = found
 			}
+			sort.Strings(languages)
+			language := strings.Join(languages, ", ")
 			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
 		}
 	}
@@ -135,6 +143,15 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	}
 	walk(doc)
 	return result, nil
+}
+
+func contains(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
 
 func recognized(value string, allowed []string) string {

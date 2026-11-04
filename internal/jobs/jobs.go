@@ -52,7 +52,7 @@ func (p Preferences) Match(j Job) Match {
 		value   string
 		allowed []string
 	}{
-		{j.Level, p.Levels}, {j.Direction, p.Directions}, {location, p.Locations}, {j.Type, p.Types}, {j.Language, p.Languages}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
+		{j.Level, p.Levels}, {j.Direction, p.Directions}, {location, p.Locations}, {j.Type, p.Types}, {j.Company, p.Companies}, {j.WorkMode, p.WorkModes},
 	} {
 		if len(field.allowed) == 0 {
 			continue
@@ -70,6 +70,23 @@ func (p Preferences) Match(j Job) Match {
 		}
 		if !found {
 			return Unsuitable
+		}
+	}
+	if len(p.Languages) > 0 {
+		if strings.TrimSpace(j.Language) == "" {
+			unknown = true
+		} else {
+			found := false
+			for _, actual := range strings.Split(j.Language, ",") {
+				for _, allowed := range p.Languages {
+					if strings.EqualFold(strings.TrimSpace(actual), strings.TrimSpace(allowed)) {
+						found = true
+					}
+				}
+			}
+			if !found {
+				return Unsuitable
+			}
 		}
 	}
 	if p.MaxHours != nil {
