@@ -79,21 +79,11 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 	id := jobicyID(root)
 	if id != "" {
 		statusURL := "https://jobicy.com/api/jobs/status?ids=" + id
-		body, actual, err := readPage(ctx, client, statusURL)
+		statuses, err := JobicyStatuses(ctx, client, []string{id})
 		if err != nil {
 			return nil, err
 		}
-		var response struct {
-			Success bool `json:"success"`
-			Jobs    []struct {
-				ID     json.Number `json:"id"`
-				Status string      `json:"status"`
-			} `json:"jobs"`
-		}
-		if actual != statusURL || json.Unmarshal(body, &response) != nil || !response.Success || len(response.Jobs) != 1 || response.Jobs[0].ID.String() != id {
-			return nil, errors.New("invalid Jobicy status response; source requires attention")
-		}
-		switch response.Jobs[0].Status {
+		switch statuses[id] {
 		case "closed":
 			return []Job{{URL: root.String(), SourceURL: statusURL, Closed: true}}, nil
 		case "active":
@@ -159,6 +149,45 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) ([]Job, erro
 		problem = errors.New("no structured vacancies found; source requires attention")
 	}
 	return found, problem
+}
+
+// JobicyStatuses reads one bounded batch of public listing statuses.
+func JobicyStatuses(ctx context.Context, client *http.Client, ids []string) (map[string]string, error) {
+	if len(ids) == 0 || len(ids) > 100 {
+		return nil, errors.New("invalid Jobicy batch size")
+	}
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		n, err := strconv.ParseUint(id, 10, 53)
+		if err != nil || n == 0 || strconv.FormatUint(n, 10) != id || wanted[id] {
+			return nil, errors.New("invalid Jobicy ID")
+		}
+		wanted[id] = true
+	}
+	uri := "https://jobicy.com/api/jobs/status?ids=" + strings.Join(ids, ",")
+	body, actual, err := readPage(ctx, client, uri)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Jobs    []struct {
+			ID     json.Number `json:"id"`
+			Status string      `json:"status"`
+		} `json:"jobs"`
+	}
+	if actual != uri || json.Unmarshal(body, &response) != nil || !response.Success || len(response.Jobs) != len(ids) {
+		return nil, errors.New("invalid Jobicy status response; source requires attention")
+	}
+	result := make(map[string]string, len(ids))
+	for _, job := range response.Jobs {
+		id := job.ID.String()
+		if !wanted[id] || result[id] != "" || (job.Status != "active" && job.Status != "closed" && job.Status != "unknown") {
+			return nil, errors.New("invalid Jobicy status response; source requires attention")
+		}
+		result[id] = job.Status
+	}
+	return result, nil
 }
 
 func jobicyID(u *url.URL) string {

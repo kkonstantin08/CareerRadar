@@ -121,6 +121,25 @@ func TestJobicyActiveStatusReadsVacancy(t *testing.T) {
 	}
 }
 
+func TestJobicyBatchStatusRequiresExactResponseIDs(t *testing.T) {
+	for _, tc := range []struct {
+		body  string
+		valid bool
+	}{
+		{`{"success":true,"jobs":[{"id":123,"status":"active"},{"id":456,"status":"closed"}]}`, true},
+		{`{"success":true,"jobs":[{"id":123,"status":"active"},{"id":789,"status":"closed"}]}`, false},
+		{`{"success":true,"jobs":[{"id":123,"status":"active"},{"id":123,"status":"closed"}]}`, false},
+	} {
+		client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: r}, nil
+		})}
+		statuses, err := JobicyStatuses(context.Background(), client, []string{"123", "456"})
+		if (err == nil) != tc.valid || tc.valid && (statuses["123"] != "active" || statuses["456"] != "closed") {
+			t.Fatalf("statuses %v error %v", statuses, err)
+		}
+	}
+}
+
 func TestJobicyRateLimitCoversAllProviderURLs(t *testing.T) {
 	for _, raw := range []string{"https://jobicy.com/jobs/123-example?utm_source=x", "https://www.jobicy.com/jobs/123", "https://JOBICY.COM:443/jobs/123", "https://jobicy.com/jobs"} {
 		if !IsJobicyURL(raw) {
