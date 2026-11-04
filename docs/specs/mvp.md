@@ -1,0 +1,7 @@
+# MVP specification
+
+CareerRadar is a single-user Go application for collecting publicly accessible IT opportunities without LLMs. A shared application service supports a Russian web interface and Telegram. PostgreSQL is the source of truth. Sources require user confirmation before monitoring; failures and missing information are visible and never constitute evidence of closure. Store evidence URLs and only facts actually extracted. Deduplicate conservatively, retain change history and suppress repeated unchanged notifications.
+
+Acceptance: source creation, discovery and confirmation, editing, disabling, deletion and CSV import; bounded monitoring and global discovery; evidence-based extraction, pagination, filtering and uncertainty; durable history, idempotency and confirmed closure; daily 08:00 Europe/Moscow scheduling; Telegram summaries, source management, monitoring, application statuses, warnings and one-time expiring account linking; responsive web UI with equivalent shared data, catalog, preferences and check history; documented REST API; local fixture, PostgreSQL, API, integration, race and real-source smoke checks. Do not bypass access controls. Missing fields remain unknown, and unchanged warnings are deduplicated.
+
+Security: the personal API must not be public without authentication; source fetching must not grant access to private network targets or follow unsafe redirects. Secrets stay in environment variables. Telegram linking is one-use, expires, and cannot silently replace an existing link.
