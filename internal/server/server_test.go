@@ -713,7 +713,7 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 	schemas := components["schemas"].(map[string]any)
 	job := schemas["Job"].(map[string]any)
 	fields := job["properties"].(map[string]any)
-	for _, name := range []string{"hours", "salary", "salary_min", "salary_max", "currency", "closed"} {
+	for _, name := range []string{"hours", "salary", "salary_min", "salary_max", "currency", "closed", "apply_url"} {
 		if _, ok := fields[name]; !ok {
 			t.Errorf("missing %s", name)
 		}

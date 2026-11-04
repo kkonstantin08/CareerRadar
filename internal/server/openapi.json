@@ -89,7 +89,8 @@
           "language": {
             "type": "string",
             "description": "Recognized programming languages separated by comma; empty when unknown"
-          }
+          },
+          "apply_url": {"type":"string","description":"Source-provided application URL; empty when unknown"}
         }
       }
     }

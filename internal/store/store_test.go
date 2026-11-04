@@ -1109,6 +1109,60 @@ func TestSalaryRangePersistenceAndIncompleteRecheck(t *testing.T) {
 	}
 }
 
+func TestApplyURLPersistsAndRejectsUnsafeScheme(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://apply.example/%d", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Apply", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, base)
+	x := Observation{SourceID: src.ID, URL: base, Title: "Engineer", ApplyURL: base + "/apply"}
+	if _, err = db.Observe(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, base).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("job:%d:%%", id))
+	x.ApplyURL = ""
+	if changed, err := db.Observe(ctx, x); err != nil || changed {
+		t.Fatalf("partial check %v %v", changed, err)
+	}
+	d, err := db.Details(ctx, id)
+	if err != nil || d.Job.ApplyURL != base+"/apply" {
+		t.Fatalf("details %+v %v", d.Job, err)
+	}
+	list, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, job := range list {
+		if job.ID == id && job.ApplyURL == base+"/apply" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("application URL missing from catalog")
+	}
+	x.ApplyURL = "javascript:alert(1)"
+	if _, err = db.Observe(ctx, x); err == nil {
+		t.Fatal("unsafe apply URL accepted")
+	}
+}
+
 func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

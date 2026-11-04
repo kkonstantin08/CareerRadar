@@ -29,6 +29,7 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 			Title       string `json:"title"`
 			Description string `json:"descriptionPlain"`
 			URL         string `json:"jobUrl"`
+			ApplyURL    string `json:"applyUrl"`
 			Workplace   string `json:"workplaceType"`
 			Employment  string `json:"employmentType"`
 			Listed      *bool  `json:"isListed"`
@@ -63,6 +64,14 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 			continue
 		}
 		j := Job{Title: item.Title, Description: item.Description, URL: item.URL, SourceURL: source}
+		if item.ApplyURL != "" {
+			apply, err := url.Parse(item.ApplyURL)
+			if err != nil || apply.Scheme != "https" || apply.Hostname() != "jobs.ashbyhq.com" || apply.User != nil {
+				problem = true
+			} else {
+				j.ApplyURL = apply.String()
+			}
+		}
 		j.LocationUncertain = item.Secondary != nil && len(item.Secondary) > 0
 		switch item.Workplace {
 		case "Remote":

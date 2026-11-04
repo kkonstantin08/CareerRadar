@@ -37,6 +37,7 @@ type Observation struct {
 	SourceID          int64  `json:"source_id"`
 	PageURL           string `json:"page_url"`
 	URL               string `json:"url"`
+	ApplyURL          string `json:"apply_url"`
 	Title             string `json:"title"`
 	Company           string `json:"company"`
 	Description       string `json:"description"`
@@ -145,6 +146,12 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 
 // Observe saves changed facts without overwriting known fields with empty values.
 func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
+	if x.ApplyURL != "" {
+		apply, err := url.Parse(x.ApplyURL)
+		if err != nil || (apply.Scheme != "http" && apply.Scheme != "https") || apply.Hostname() == "" || apply.User != nil {
+			return false, errors.New("invalid application URL")
+		}
+	}
 	u, err := url.Parse(x.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
 		return false, errors.New("invalid job URL")
@@ -182,7 +189,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	}
 	var id int64
 	var old Observation
-	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,monthly_salary_min,monthly_salary_max,salary_currency,direction,language FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level, &old.Hours, &old.Salary, &old.SalaryMin, &old.SalaryMax, &old.Currency, &old.Direction, &old.Language)
+	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,monthly_salary_min,monthly_salary_max,salary_currency,direction,language,apply_url FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level, &old.Hours, &old.Salary, &old.SalaryMin, &old.SalaryMax, &old.Currency, &old.Direction, &old.Language, &old.ApplyURL)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
@@ -196,7 +203,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	for _, pair := range []struct {
 		current  *string
 		previous string
-	}{{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description}, {&x.Deadline, old.Deadline}, {&x.WorkMode, old.WorkMode}, {&x.Type, old.Type}, {&x.Direction, old.Direction}, {&x.Language, old.Language}} {
+	}{{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description}, {&x.Deadline, old.Deadline}, {&x.ApplyURL, old.ApplyURL}, {&x.WorkMode, old.WorkMode}, {&x.Type, old.Type}, {&x.Direction, old.Direction}, {&x.Language, old.Language}} {
 		if *pair.current == "" {
 			*pair.current = pair.previous
 		}
@@ -216,9 +223,9 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		return false, errors.New("invalid salary range")
 	}
 	newJob := errors.Is(err, sql.ErrNoRows)
-	changed := !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || !reflect.DeepEqual(x.SalaryMin, old.SalaryMin) || !reflect.DeepEqual(x.SalaryMax, old.SalaryMax) || x.Currency != old.Currency || newJob || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level || x.Direction != old.Direction || x.Language != old.Language
+	changed := !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || !reflect.DeepEqual(x.SalaryMin, old.SalaryMin) || !reflect.DeepEqual(x.SalaryMax, old.SalaryMax) || x.Currency != old.Currency || newJob || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.ApplyURL != old.ApplyURL || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level || x.Direction != old.Direction || x.Language != old.Language
 	if changed {
-		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,direction,language,monthly_salary_min,monthly_salary_max) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,weekly_hours=EXCLUDED.weekly_hours,monthly_salary=EXCLUDED.monthly_salary,salary_currency=EXCLUDED.salary_currency,direction=EXCLUDED.direction,language=EXCLUDED.language,monthly_salary_min=EXCLUDED.monthly_salary_min,monthly_salary_max=EXCLUDED.monthly_salary_max,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level, x.Hours, x.Salary, x.Currency, x.Direction, x.Language, x.SalaryMin, x.SalaryMax).Scan(&id)
+		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,direction,language,monthly_salary_min,monthly_salary_max,apply_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,weekly_hours=EXCLUDED.weekly_hours,monthly_salary=EXCLUDED.monthly_salary,salary_currency=EXCLUDED.salary_currency,direction=EXCLUDED.direction,language=EXCLUDED.language,monthly_salary_min=EXCLUDED.monthly_salary_min,monthly_salary_max=EXCLUDED.monthly_salary_max,apply_url=EXCLUDED.apply_url,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level, x.Hours, x.Salary, x.Currency, x.Direction, x.Language, x.SalaryMin, x.SalaryMax, x.ApplyURL).Scan(&id)
 		if err != nil {
 			return false, err
 		}
@@ -330,8 +337,14 @@ func jobNotification(current, previous Observation, isNew, needsClarification bo
 		if current.Description != previous.Description {
 			lines = append(lines, "Изменилось описание")
 		}
+		if current.ApplyURL != previous.ApplyURL {
+			lines = append(lines, "Изменилась ссылка на отклик")
+		}
 	}
 	lines = append(lines, current.URL)
+	if current.ApplyURL != "" {
+		lines = append(lines, "Отклик: "+current.ApplyURL)
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -364,7 +377,7 @@ func (s *Store) RecordCheck(ctx context.Context, sourceID int64, problem string)
 
 // Jobs lists stored jobs, newest first.
 func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max FROM jobs ORDER BY updated_at DESC,id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs ORDER BY updated_at DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +385,7 @@ func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
 	xs := []Job{}
 	for rows.Next() {
 		var x Job
-		if err := rows.Scan(&x.ID, &x.SourceID, &x.URL, &x.Title, &x.Company, &x.Description, &x.Deadline, &x.Status, &x.Location, &x.WorkMode, &x.Type, &x.Level, &x.Hours, &x.Salary, &x.Currency, &x.Closed, &x.Direction, &x.Language, &x.SalaryMin, &x.SalaryMax); err != nil {
+		if err := rows.Scan(&x.ID, &x.SourceID, &x.URL, &x.Title, &x.Company, &x.Description, &x.Deadline, &x.Status, &x.Location, &x.WorkMode, &x.Type, &x.Level, &x.Hours, &x.Salary, &x.Currency, &x.Closed, &x.Direction, &x.Language, &x.SalaryMin, &x.SalaryMax, &x.ApplyURL); err != nil {
 			return nil, err
 		}
 		xs = append(xs, x)

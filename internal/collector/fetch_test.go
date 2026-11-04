@@ -51,11 +51,11 @@ func TestAshbyPublicBoard(t *testing.T) {
 		if r.URL.String() != "https://api.ashbyhq.com/posting-api/job-board/example" {
 			t.Fatalf("URL %s", r.URL)
 		}
-		body := `{"apiVersion":"1","jobs":[{"title":"Junior Go Engineer","isListed":true,"workplaceType":"Remote","employmentType":"Intern","descriptionPlain":"Build services","jobUrl":"https://jobs.ashbyhq.com/example/abc"},{"title":"Unlisted","isListed":false,"jobUrl":"https://jobs.ashbyhq.com/example/hidden"}]}`
+		body := `{"apiVersion":"1","jobs":[{"title":"Junior Go Engineer","isListed":true,"workplaceType":"Remote","employmentType":"Intern","descriptionPlain":"Build services","jobUrl":"https://jobs.ashbyhq.com/example/abc","applyUrl":"https://jobs.ashbyhq.com/example/abc/application"},{"title":"Unlisted","isListed":false,"jobUrl":"https://jobs.ashbyhq.com/example/hidden"}]}`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
 	})}
 	got, err := Fetch(context.Background(), client, "https://jobs.ashbyhq.com/example")
-	if err != nil || len(got) != 1 || got[0].Title != "Junior Go Engineer" || got[0].WorkMode != "remote" || got[0].Type != "Internship" || got[0].Description != "Build services" || got[0].URL != "https://jobs.ashbyhq.com/example/abc" {
+	if err != nil || len(got) != 1 || got[0].Title != "Junior Go Engineer" || got[0].WorkMode != "remote" || got[0].Type != "Internship" || got[0].Description != "Build services" || got[0].URL != "https://jobs.ashbyhq.com/example/abc" || got[0].ApplyURL != "https://jobs.ashbyhq.com/example/abc/application" {
 		t.Fatalf("jobs %+v error %v", got, err)
 	}
 }
@@ -73,6 +73,14 @@ func TestAshbyIncompleteListingsPreserveValidJobs(t *testing.T) {
 		if err == nil || len(got) != tc.count {
 			t.Fatalf("jobs %+v error %v", got, err)
 		}
+	}
+}
+
+func TestAshbyRejectsUnsafeApplyURLWithoutLosingJob(t *testing.T) {
+	body := `{"jobs":[{"title":"Engineer","isListed":true,"jobUrl":"https://jobs.ashbyhq.com/example/1","applyUrl":"javascript:alert(1)"}]}`
+	got, err := parseAshby([]byte(body), "https://jobs.ashbyhq.com/example")
+	if err == nil || len(got) != 1 || got[0].ApplyURL != "" {
+		t.Fatalf("jobs %+v error %v", got, err)
 	}
 }
 

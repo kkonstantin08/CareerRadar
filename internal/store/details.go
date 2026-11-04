@@ -23,7 +23,7 @@ type JobDetails struct {
 func (s *Store) Details(ctx context.Context, id int64) (JobDetails, error) {
 	var d JobDetails
 	j := &d.Job
-	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max FROM jobs WHERE id=$1`, id).Scan(&j.ID, &j.SourceID, &j.URL, &j.Title, &j.Company, &j.Description, &j.Deadline, &j.Status, &j.Location, &j.WorkMode, &j.Type, &j.Level, &j.Hours, &j.Salary, &j.Currency, &j.Closed, &j.Direction, &j.Language, &j.SalaryMin, &j.SalaryMax)
+	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs WHERE id=$1`, id).Scan(&j.ID, &j.SourceID, &j.URL, &j.Title, &j.Company, &j.Description, &j.Deadline, &j.Status, &j.Location, &j.WorkMode, &j.Type, &j.Level, &j.Hours, &j.Salary, &j.Currency, &j.Closed, &j.Direction, &j.Language, &j.SalaryMin, &j.SalaryMax, &j.ApplyURL)
 	if err != nil {
 		return d, err
 	}

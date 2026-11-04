@@ -21,6 +21,7 @@ type Job struct {
 	Description       string
 	Deadline          string
 	URL               string
+	ApplyURL          string
 	SourceURL         string
 	Location          string
 	LocationUncertain bool
