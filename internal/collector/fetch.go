@@ -111,6 +111,16 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 	}
 	if api := greenhouseURL(root); api != "" {
 		body, _, err := readPage(ctx, client, api)
+		if errors.Is(err, errResponseTooLarge) && strings.HasSuffix(api, "?content=true") {
+			body, _, err = readPage(ctx, client, strings.TrimSuffix(api, "?content=true"))
+			if err == nil {
+				jobs, parseErr := parseGreenhouse(body, root.String())
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				return jobs, errors.New("Greenhouse descriptions exceeded response limit; source requires attention")
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -264,6 +274,8 @@ func IsJobicyURL(raw string) bool {
 	return host == "jobicy.com" || strings.HasSuffix(host, ".jobicy.com")
 }
 
+var errResponseTooLarge = errors.New("source response too large")
+
 func readPage(ctx context.Context, client *http.Client, uri string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
@@ -284,7 +296,7 @@ func readPage(ctx context.Context, client *http.Client, uri string) ([]byte, str
 		return nil, "", err
 	}
 	if len(body) > limit {
-		return nil, "", errors.New("source response too large")
+		return nil, "", errResponseTooLarge
 	}
 	actual := uri
 	if res.Request != nil && res.Request.URL != nil {
@@ -365,7 +377,11 @@ func greenhouseURL(u *url.URL) string {
 			}
 		}
 	}
-	return "https://boards-api.greenhouse.io/v1/boards/" + strings.Join(parts, "/")
+	api := "https://boards-api.greenhouse.io/v1/boards/" + strings.Join(parts, "/")
+	if len(parts) == 1 {
+		api += "/jobs?content=true"
+	}
+	return api
 }
 
 func parseGreenhouse(body []byte, source string) ([]Job, error) {

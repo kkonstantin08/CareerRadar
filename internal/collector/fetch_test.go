@@ -46,6 +46,34 @@ func TestGreenhousePublicAPI(t *testing.T) {
 	}
 }
 
+func TestGreenhouseBoardIncludesJobDescriptions(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/boards/example/jobs" || r.URL.Query().Get("content") != "true" {
+			t.Fatalf("board request missing content: %s", r.URL)
+		}
+		body := `{"jobs":[{"title":"Go engineer","absolute_url":"https://boards.greenhouse.io/example/jobs/123","content":"Build services"}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://boards.greenhouse.io/example")
+	if err != nil || len(got) != 1 || got[0].Description != "Build services" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestGreenhouseOversizedDescriptionsPreservePartialJobs(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"jobs":[{"title":"Go engineer","absolute_url":"https://boards.greenhouse.io/example/jobs/123"}]}`
+		if r.URL.Query().Get("content") == "true" {
+			body = strings.Repeat("x", (2<<20)+1)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://boards.greenhouse.io/example")
+	if err == nil || len(got) != 1 || got[0].Title != "Go engineer" {
+		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
 func TestFetchFollowsVacancyLinksAndPagination(t *testing.T) {
 	pages := map[string]string{
 		"/careers":        `<a href="/jobs/1">Вакансия Go</a><a href="/careers?page=2" rel="next">Next</a>`,
