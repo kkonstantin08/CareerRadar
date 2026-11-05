@@ -249,6 +249,65 @@ func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error
 	return tx.Commit()
 }
 
+// ReopenGreenhouse reverses only a closure established by the same individual Greenhouse job endpoint.
+func (s *Store) ReopenGreenhouse(ctx context.Context, jobURL, evidence string) error {
+	if expected := collector.GreenhouseClosureEvidenceURL(jobURL); expected == "" || expected != evidence {
+		return errors.New("invalid Greenhouse reopening evidence")
+	}
+	return s.reopenSourceClosure(ctx, collector.GreenhouseCanonicalURL(jobURL), evidence, "greenhouse")
+}
+
+// ReopenLever reverses only a closure established for a posting from the same Lever board.
+func (s *Store) ReopenLever(ctx context.Context, jobURL, evidence string) error {
+	if collector.LeverClosureEvidenceURL(jobURL) == "" || collector.LeverFeedURL(jobURL) != evidence {
+		return errors.New("invalid Lever reopening evidence")
+	}
+	return s.reopenSourceClosure(ctx, collector.LeverClosureEvidenceURL(jobURL), evidence, "lever")
+}
+
+func (s *Store) reopenSourceClosure(ctx context.Context, jobURL, evidence, origin string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id int64
+	var title string
+	var closed bool
+	var closedBy string
+	err = tx.QueryRowContext(ctx, `SELECT id,title,closed,closed_by FROM jobs WHERE url=$1 FOR UPDATE`, jobURL).Scan(&id, &title, &closed, &closedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !closed || closedBy != origin {
+		return tx.Commit()
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE jobs SET closed=false,closed_by='',updated_at=now() WHERE id=$1`, id); err != nil {
+		return err
+	}
+	snapshot, err := json.Marshal(map[string]any{"closed": false, "evidence": evidence, "title": title})
+	if err != nil {
+		return err
+	}
+	var revision int64
+	if err = tx.QueryRowContext(ctx, `INSERT INTO job_history(job_id,snapshot) VALUES($1,$2) RETURNING id`, id, snapshot).Scan(&revision); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_evidence(job_url,page_url) VALUES($1,$2) ON CONFLICT(job_url,page_url) DO UPDATE SET last_seen=now()`, jobURL, evidence); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 AND state='pending'`, fmt.Sprintf("closure:%d:%%", id)); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("reopen:%d:%d", id, revision), fmt.Sprintf("Вакансия вновь открыта по данным %s: %s\n%s", origin, title, jobURL)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func validateJobicyEvidence(jobURL, evidence string) error {
 	u, err := url.Parse(evidence)
 	id := collector.JobicyID(jobURL)

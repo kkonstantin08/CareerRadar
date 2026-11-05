@@ -1431,6 +1431,63 @@ func TestLeverClosureRecordsItsProviderOrigin(t *testing.T) {
 	}
 }
 
+func TestLeverClosureReopensOnlyWhenThePostingReturnsToItsFeed(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	uuid := fmt.Sprintf("4f816f9a-7f03-4e18-9710-%012x", time.Now().UnixNano()%1000000000000)
+	jobURL := "https://jobs.lever.co/careerradar-test/" + uuid
+	evidence := "https://api.lever.co/v0/postings/careerradar-test?mode=xml"
+	source, err := db.AddSource(ctx, "Lever reopen", jobURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, source.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, jobURL)
+	if _, err = db.Observe(ctx, Observation{SourceID: source.ID, URL: jobURL, Title: "Go Engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 OR event_key LIKE $2`, fmt.Sprintf("closure:%d:%%", id), fmt.Sprintf("reopen:%d:%%", id))
+	if closed, err := db.ConfirmClosedURL(ctx, jobURL, jobURL); err != nil || !closed {
+		t.Fatalf("close result %v %v", closed, err)
+	}
+	if err = db.ReopenLever(ctx, jobURL, evidence); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := db.Details(ctx, id)
+	if err != nil || detail.Job.Closed {
+		t.Fatalf("listing was not reopened: %+v %v", detail.Job, err)
+	}
+	if err = db.ReopenLever(ctx, jobURL, evidence); err != nil {
+		t.Fatal(err)
+	}
+	var events int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("reopen:%d:%%", id)).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("reopen notifications %d: %v", events, err)
+	}
+	if err = db.ConfirmClosed(ctx, id, jobURL); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenLever(ctx, jobURL, evidence); err != nil {
+		t.Fatal(err)
+	}
+	detail, err = db.Details(ctx, id)
+	if err != nil || !detail.Job.Closed {
+		t.Fatalf("source observation reversed an owner closure: %+v %v", detail.Job, err)
+	}
+}
+
 func TestJobicyLegacyURLIsReused(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

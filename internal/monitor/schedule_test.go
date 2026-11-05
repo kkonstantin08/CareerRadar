@@ -200,6 +200,79 @@ func TestGreenhouseNotFoundClosesOnlyTheObservedJob(t *testing.T) {
 	}
 }
 
+func TestPublishedLeverAndGreenhouseListingsReopenSourceClosures(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("source_reopen_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := u.Query()
+	query.Set("search_path", schema)
+	u.RawQuery = query.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sqlDB, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	leverURL := "https://jobs.lever.co/careerradar-test/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e"
+	greenhouseURL := "https://boards.greenhouse.io/careerradar-test/jobs/123456789"
+	cases := []struct {
+		name, url, evidence string
+	}{
+		{"Lever", leverURL, leverURL},
+		{"Greenhouse", greenhouseURL, "https://boards-api.greenhouse.io/v1/boards/careerradar-test/jobs/123456789"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := db.AddSource(ctx, tc.name, tc.url, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.DeleteSource(ctx, source.ID)
+			if _, err = db.Observe(ctx, store.Observation{SourceID: source.ID, URL: tc.url, Title: "Go Engineer", Company: "Example"}); err != nil {
+				t.Fatal(err)
+			}
+			if closed, err := db.ConfirmClosedURL(ctx, tc.url, tc.evidence); err != nil || !closed {
+				t.Fatalf("close result %v %v", closed, err)
+			}
+			var id int64
+			if err = sqlDB.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, tc.url).Scan(&id); err != nil {
+				t.Fatal(err)
+			}
+			defer sqlDB.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 OR event_key LIKE $2`, fmt.Sprintf("closure:%d:%%", id), fmt.Sprintf("reopen:%d:%%", id))
+			service := New(db, func(context.Context, string) ([]collector.Job, error) {
+				return []collector.Job{{URL: tc.url, Title: "Go Engineer", Company: "Example", Deadline: "2027-01-01"}}, nil
+			})
+			if problem, err := service.Check(ctx, source.ID); err != nil || problem != "" {
+				t.Fatalf("check: %q %v", problem, err)
+			}
+			details, err := db.Details(ctx, id)
+			if err != nil || details.Job.Closed {
+				t.Fatalf("listing remained closed after source republished it: %+v %v", details.Job, err)
+			}
+		})
+	}
+}
+
 func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

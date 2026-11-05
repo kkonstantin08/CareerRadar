@@ -48,6 +48,19 @@ func LeverClosureEvidenceURL(raw string) string {
 	return "https://jobs.lever.co/" + site + "/" + id
 }
 
+// LeverFeedURL returns the public postings feed for a supported Lever board or posting URL.
+func LeverFeedURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	site, _, ok := leverBoard(u)
+	if !ok {
+		return ""
+	}
+	return "https://api.lever.co/v0/postings/" + url.PathEscape(site) + "?mode=xml"
+}
+
 func leverApplyURL(site, id, raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() != "jobs.lever.co" || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.RawPath != "" || u.Fragment != "" {

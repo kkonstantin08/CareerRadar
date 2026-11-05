@@ -194,6 +194,16 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "") {
 			problem = "Vacancy details require clarification"
 		}
+		if evidence := collector.GreenhouseClosureEvidenceURL(src.URL); evidence != "" && evidence == collector.GreenhouseClosureEvidenceURL(job.URL) {
+			if err := s.db.ReopenGreenhouse(ctx, job.URL, evidence); err != nil {
+				return "", err
+			}
+		}
+		if feed := collector.LeverFeedURL(src.URL); feed != "" && feed == collector.LeverFeedURL(job.URL) {
+			if err := s.db.ReopenLever(ctx, job.URL, feed); err != nil {
+				return "", err
+			}
+		}
 		jobURL := job.URL
 		if jobURL == "" && len(found) == 1 {
 			jobURL = src.URL
