@@ -74,7 +74,7 @@ curl -u "$APP_USER:$APP_PASSWORD" -H 'Content-Type: application/json' \
   http://127.0.0.1:8080/api/sources
 ```
 
-Новый источник выключен. Подтвердите его запросом `PUT /api/sources/{id}` перед вызовом `POST /api/sources/{id}/check`. Для импорта отправьте CSV с колонками `name,url` или экспорт листа `SOURCES` с колонками `company,start_url` на `POST /api/sources/import` с заголовком `Content-Type: text/csv`. Исходную Google-таблицу можно прочитать через подключённый инструмент Google Drive; экспортируйте лист `SOURCES` в CSV для импорта. Приложение не изменяет таблицу.
+Новый источник выключен. Подтвердите его запросом `PUT /api/sources/{id}` перед вызовом `POST /api/sources/{id}/check`. Для импорта отправьте CSV с колонками `name,url` или экспорт листа `SOURCES` с колонками `company,start_url` на `POST /api/sources/import` с заголовком `Content-Type: text/csv`. Для импорта вашей Google-таблицы скачайте нужный лист в CSV и загрузите его через кабинет или API; Google OAuth не требуется, исходная таблица не изменяется.
 
 ## Тесты
 
