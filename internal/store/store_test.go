@@ -1336,6 +1336,23 @@ func TestGreenhouseClosureEvidenceMustMatchPublishedJob(t *testing.T) {
 	}
 }
 
+func TestLeverClosureEvidenceMustMatchIndividualPosting(t *testing.T) {
+	jobURL := "https://jobs.lever.co/example/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e"
+	if err := validateClosureEvidence(jobURL, jobURL); err != nil {
+		t.Fatalf("valid Lever evidence rejected: %v", err)
+	}
+	for _, invalid := range []struct{ job, evidence string }{
+		{jobURL, "https://jobs.lever.co/example/00000000-0000-0000-0000-000000000000"},
+		{"https://jobs.lever.co/other/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e", jobURL},
+		{"https://jobs.lever.co/example", jobURL},
+		{jobURL, "https://attacker.example/example/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e"},
+	} {
+		if err := validateClosureEvidence(invalid.job, invalid.evidence); err == nil {
+			t.Errorf("mismatched Lever evidence accepted for %s: %s", invalid.job, invalid.evidence)
+		}
+	}
+}
+
 func TestGreenhouseClosureRecordsItsProviderOrigin(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -1372,6 +1389,44 @@ func TestGreenhouseClosureRecordsItsProviderOrigin(t *testing.T) {
 	}
 	var origin string
 	if err = db.db.QueryRowContext(ctx, `SELECT closed_by FROM jobs WHERE url=$1`, jobURL).Scan(&origin); err != nil || origin != "greenhouse" {
+		t.Fatalf("closure origin %q error %v", origin, err)
+	}
+}
+
+func TestLeverClosureRecordsItsProviderOrigin(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	uuid := fmt.Sprintf("4f816f9a-7f03-4e18-9710-%012x", time.Now().UnixNano()%1000000000000)
+	jobURL := "https://jobs.lever.co/careerradar-test/" + uuid
+	sourceURL := jobURL + "?utm_source=career-radar"
+	source, err := db.AddSource(ctx, "Lever closure origin", sourceURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, source.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, jobURL)
+	if _, err = db.Observe(ctx, Observation{SourceID: source.ID, URL: jobURL, Title: "Go Engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		var id int64
+		_ = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id)
+		_, _ = db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", id))
+	}()
+	closed, err := db.ConfirmClosedURL(ctx, sourceURL, jobURL)
+	if err != nil || !closed {
+		t.Fatalf("close result %v %v", closed, err)
+	}
+	var origin string
+	if err = db.db.QueryRowContext(ctx, `SELECT closed_by FROM jobs WHERE url=$1`, jobURL).Scan(&origin); err != nil || origin != "lever" {
 		t.Fatalf("closure origin %q error %v", origin, err)
 	}
 }

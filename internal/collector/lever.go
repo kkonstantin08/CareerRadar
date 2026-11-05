@@ -13,6 +13,7 @@ import (
 
 var leverSite = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 var leverPostingID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var errLeverPostingMissing = errors.New("Lever posting is missing from the public feed; source requires attention")
 
 func leverBoard(u *url.URL) (string, string, bool) {
 	if u.Scheme != "https" || u.Hostname() != "jobs.lever.co" || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.RawPath != "" {
@@ -32,6 +33,19 @@ func leverBoard(u *url.URL) (string, string, bool) {
 		return "", "", false
 	}
 	return parts[0], strings.ToLower(parts[1]), true
+}
+
+// LeverClosureEvidenceURL returns the canonical individual posting URL for closure verification.
+func LeverClosureEvidenceURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	site, id, ok := leverBoard(u)
+	if !ok || id == "" {
+		return ""
+	}
+	return "https://jobs.lever.co/" + site + "/" + id
 }
 
 func leverApplyURL(site, id, raw string) string {
@@ -96,7 +110,7 @@ func parseLever(body []byte, source, site, targetID string) ([]Job, error) {
 	}
 	if len(jobs) == 0 {
 		if targetID != "" {
-			return nil, errors.New("Lever posting is missing from the public feed; source requires attention")
+			return nil, errLeverPostingMissing
 		}
 		return nil, errors.New("Lever feed contains no public postings; source requires attention")
 	}

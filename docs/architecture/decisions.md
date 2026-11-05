@@ -6,4 +6,4 @@ For an already observed individual Greenhouse listing, a `404` from its exact pu
 
 Parse schema.org JobPosting and EducationalOccupationalProgram records from JSON-LD and Microdata. When a page publishes both formats, prefer JSON-LD to avoid recording the same listing twice. Keep unsupported program types and missing fields unknown; do not infer them from free-form page text.
 
-Lever boards use the vendor's public XML postings feed without authentication. A specific Lever URL is matched against the feed by posting ID; if it is missing, record a source problem and leave prior observations open because feed absence is not closure evidence. Accept apply links only on the matching `jobs.lever.co` board and posting path.
+Lever boards use the vendor's public XML postings feed without authentication. A specific Lever URL is matched against the feed by posting ID; if it is missing, check the exact individual `jobs.lever.co` page. Only an unredirected `404` from that page is closure evidence; feed absence, redirects, access errors and other statuses leave prior observations open. Accept apply links only on the matching board and posting path.

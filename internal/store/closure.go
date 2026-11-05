@@ -105,6 +105,9 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 	if canonical := collector.GreenhouseCanonicalURL(jobURL); canonical != "" {
 		jobURL = canonical
 	}
+	if canonical := collector.LeverClosureEvidenceURL(jobURL); canonical != "" {
+		jobURL = canonical
+	}
 	jobURL, err := jobicyStoredURL(ctx, s.db, jobURL)
 	if err != nil {
 		return false, err
@@ -120,6 +123,8 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 	origin := "jobicy"
 	if collector.GreenhouseClosureEvidenceURL(jobURL) == evidence {
 		origin = "greenhouse"
+	} else if collector.LeverClosureEvidenceURL(jobURL) == evidence {
+		origin = "lever"
 	}
 	return true, s.confirmClosed(ctx, id, evidence, origin)
 }
@@ -255,7 +260,8 @@ func validateJobicyEvidence(jobURL, evidence string) error {
 
 func validateClosureEvidence(jobURL, evidence string) error {
 	greenhouseEvidence := collector.GreenhouseClosureEvidenceURL(jobURL)
-	if validateJobicyEvidence(jobURL, evidence) == nil || greenhouseEvidence != "" && greenhouseEvidence == evidence {
+	leverEvidence := collector.LeverClosureEvidenceURL(jobURL)
+	if validateJobicyEvidence(jobURL, evidence) == nil || greenhouseEvidence != "" && greenhouseEvidence == evidence || leverEvidence != "" && leverEvidence == evidence {
 		return nil
 	}
 	return errors.New("invalid source closure evidence")

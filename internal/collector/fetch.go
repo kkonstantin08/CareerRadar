@@ -152,7 +152,25 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		if actual != api {
 			return nil, errors.New("unexpected Lever API redirect; source requires attention")
 		}
-		return parseLever(body, root.String(), site, id)
+		jobs, parseErr := parseLever(body, root.String(), site, id)
+		if id == "" || !errors.Is(parseErr, errLeverPostingMissing) {
+			return jobs, parseErr
+		}
+		evidence := LeverClosureEvidenceURL(root.String())
+		directClient := *client
+		directClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		_, actual, checkErr := readPage(ctx, &directClient, evidence)
+		var responseErr *httpStatusError
+		if errors.As(checkErr, &responseErr) && errors.Is(checkErr, errNotFound) && responseErr.url == evidence {
+			return []Job{{URL: root.String(), SourceURL: evidence, Closed: true}}, nil
+		}
+		if checkErr != nil {
+			return nil, errors.New("Lever listing is missing from its public feed; direct closure check failed; source requires attention")
+		}
+		if actual != evidence {
+			return nil, errors.New("unexpected Lever posting redirect; source requires attention")
+		}
+		return nil, errLeverPostingMissing
 	}
 	type page struct {
 		url   string

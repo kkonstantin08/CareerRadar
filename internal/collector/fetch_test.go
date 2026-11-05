@@ -129,6 +129,87 @@ func TestLeverFetchUsesPublicXMLPostingsFeed(t *testing.T) {
 	}
 }
 
+func TestLeverExactUnredirectedNotFoundConfirmsClosure(t *testing.T) {
+	const jobURL = "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e"
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() == "https://api.lever.co/v0/postings/examplecompany?mode=xml" {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("<postings></postings>")), Header: make(http.Header), Request: r}, nil
+		}
+		if r.URL.String() != jobURL {
+			t.Fatalf("unexpected request %s", r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, jobURL)
+	if err != nil || len(got) != 1 || !got[0].Closed || got[0].URL != jobURL || got[0].SourceURL != jobURL {
+		t.Fatalf("Lever closure evidence %+v, err %v", got, err)
+	}
+}
+
+func TestLeverRedirectOrForbiddenPageDoesNotConfirmClosure(t *testing.T) {
+	const jobURL = "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e"
+	for _, tc := range []struct {
+		name   string
+		status int
+		check  func(*http.Request) bool
+	}{
+		{"forbidden", http.StatusForbidden, nil},
+		{"redirect", http.StatusFound, func(r *http.Request) bool { return r.URL.String() == jobURL }},
+		{"feed omission only", http.StatusOK, func(r *http.Request) bool { return r.URL.String() == jobURL }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(r.URL.String(), "https://api.lever.co/") {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("<postings></postings>")), Header: make(http.Header), Request: r}, nil
+				}
+				if tc.check != nil && !tc.check(r) {
+					t.Fatalf("unexpected request %s", r.URL)
+				}
+				header := make(http.Header)
+				if tc.status == http.StatusFound {
+					header.Set("Location", "https://jobs.lever.co/examplecompany/other")
+				}
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader("<html><h1>Go role</h1></html>")), Header: header, Request: r}, nil
+			}), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			got, err := Fetch(context.Background(), client, jobURL)
+			if err == nil || len(got) != 0 {
+				t.Fatalf("non-404 response confirmed closure: %+v, err %v", got, err)
+			}
+		})
+	}
+}
+
+func TestLeverRedirectChainReturningToCanonicalDoesNotConfirmClosure(t *testing.T) {
+	const jobURL = "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e"
+	const alias = "https://jobs.lever.co/examplecompany/alias"
+	canonicalRequests := 0
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.String() {
+		case "https://api.lever.co/v0/postings/examplecompany?mode=xml":
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("<postings></postings>")), Header: make(http.Header), Request: r}, nil
+		case jobURL:
+			canonicalRequests++
+			if canonicalRequests > 1 {
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+			}
+			header := make(http.Header)
+			header.Set("Location", alias)
+			return &http.Response{StatusCode: http.StatusFound, Body: io.NopCloser(strings.NewReader("")), Header: header, Request: r}, nil
+		case alias:
+			header := make(http.Header)
+			header.Set("Location", jobURL)
+			return &http.Response{StatusCode: http.StatusFound, Body: io.NopCloser(strings.NewReader("")), Header: header, Request: r}, nil
+		default:
+			t.Fatalf("unexpected request %s", r.URL)
+			return nil, nil
+		}
+	})}
+	got, err := Fetch(context.Background(), client, jobURL)
+	if err == nil || len(got) != 0 {
+		t.Fatalf("redirect chain confirmed closure: %+v, err %v", got, err)
+	}
+}
+
 func TestFetchRetainsExplicitHTMLJobTitleWhenStructuredDataIsMissing(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		body := `<html><main><h1>Go Intern</h1><a href="/apply/123">Apply now</a></main></html>`
