@@ -7,12 +7,18 @@ import (
 	"fmt"
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+type monitorTransport func(*http.Request) (*http.Response, error)
+
+func (f monitorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestNextMoscowRun(t *testing.T) {
 	loc := time.FixedZone("MSK", 3*60*60)
@@ -120,6 +126,77 @@ func TestJobicyChecksShareBatch(t *testing.T) {
 	})
 	if _, err = restarted.Check(ctx, a.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGreenhouseNotFoundClosesOnlyTheObservedJob(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("greenhouse_closure_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, _ := url.Parse(dsn)
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	jobID := time.Now().UnixNano()%1000000000000 + 1
+	jobURL := fmt.Sprintf("https://boards.greenhouse.io/careerradar-test/jobs/%d?gh_jid=%d&utm_source=test#apply", jobID, jobID)
+	source, err := db.AddSource(ctx, "Greenhouse job", jobURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, store.Observation{SourceID: source.ID, URL: jobURL, Title: "Go Intern", Company: "Example"}); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: monitorTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "boards-api.greenhouse.io" {
+			t.Fatalf("unexpected host %s", r.URL.Host)
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Header: make(http.Header), Request: r}, nil
+	})}
+	service := New(db, func(ctx context.Context, raw string) ([]collector.Job, error) {
+		return collector.Fetch(ctx, client, raw)
+	})
+	if problem, err := service.Check(ctx, source.ID); err != nil || problem != "" {
+		t.Fatalf("check: %q %v", problem, err)
+	}
+	jobs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || !jobs[0].Closed {
+		t.Fatalf("job was not confirmed closed: %+v", jobs)
+	}
+	details, err := db.Details(ctx, jobs[0].ID)
+	if err != nil || len(details.Evidence) < 2 {
+		t.Fatalf("closure evidence was not retained: %+v %v", details, err)
+	}
+	unseenURL := fmt.Sprintf("https://boards.greenhouse.io/careerradar-test/jobs/%d", time.Now().UnixNano()%1000000000000+1)
+	unseen, err := db.AddSource(ctx, "Unseen Greenhouse job", unseenURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problem, err := service.Check(ctx, unseen.ID); err != nil || problem == "" {
+		t.Fatalf("unseen 404 must require attention: %q %v", problem, err)
+	}
+	jobs, err = db.Jobs(ctx)
+	if err != nil || len(jobs) != 1 || !jobs[0].Closed {
+		t.Fatalf("unobserved Greenhouse URL created a closed vacancy: %+v %v", jobs, err)
 	}
 }
 

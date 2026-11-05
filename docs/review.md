@@ -4,8 +4,8 @@ Date: 2026-11-04. Reviewer: GPT-6 Luna, reasoning effort High. Scope: source, te
 
 ## Outstanding findings
 
-- **P1 — Incomplete collector and filters.** `internal/collector/parse.go` extracts only a subset of fields and recognizes hours and monthly salary only in supported structured formats. `internal/jobs/jobs.go` cannot reject a mismatch when an attribute was not extracted. Reproduce with an unsupported location eligibility, language, specialization or non-JSON-LD representation: the missing fields remain unknown. Support additional explicit source formats and keep unknown values conservative.
-- **P1 — Limited automatic confirmation of closure.** Individual Jobicy job URLs added as sources can be marked closed and reopened from Jobicy's explicit status response for the same ID. This describes Jobicy's listing, not an employer response. Automatic state changes for other sources remain unsupported. Missing vacancies, unknown statuses and failed sources do not establish closure.
+- **P1 — Incomplete collector and filters (partially addressed 2026-11-05).** The collector now retains a title and explicit apply link from limited non-JSON-LD job pages, handles JSON-LD location/employment type arrays, and reads Greenhouse location. Workload, salary, level, language, direction and program type are still unavailable on many pages. Reproduce with an unsupported language, specialization, workload or compensation representation: the missing facts remain unknown. Continue adding verified field mappings for supported sources without guessing.
+- **P1 — Limited automatic confirmation of closure (partially addressed 2026-11-05).** Individual Jobicy job URLs use its explicit status response, and individual Greenhouse job URLs now use `404` from the exact public job endpoint. Neither is a direct employer confirmation. Other providers and board-level absence remain unsupported. Unknown statuses, redirected responses and failed sources do not establish closure.
 - **Addressed — Discovery results were transient.** The web search now persists attributed Remotive results; the associated source remains disabled.
 - **Addressed — Telegram update crash window.** Account linking, status changes and source mutations now commit with the update acknowledgement. Manual checks use a durable queue; owner responses use the notification outbox. Automated recovery can repeat an interrupted check, so source checks and notifications remain idempotent.
 - **Addressed — Uncertain notification delivery lacked an operator workflow.** Stale sends are now marked unknown and the History screen offers explicit resolution or retry with a duplicate warning.
@@ -27,7 +27,7 @@ GPT-6 Luna (High) independently reviewed the Remotive and uncertain-delivery cha
 
 ## Follow-up review: filters and Telegram status
 
-GPT-6 Luna (High) reviewed the direction/language pipeline and transactional `/status` handling. The reviewer found that a recognized language was lost when listed alongside other skills; this was fixed with tests for one and multiple recognized languages. The reviewer inspected the changes without running tests. Other Telegram commands still lack an atomic acknowledgement, and source-proven automatic closure remains unimplemented.
+GPT-6 Luna (High) reviewed the direction/language pipeline and transactional `/status` handling. The reviewer found that a recognized language was lost when listed alongside other skills; this was fixed with tests for one and multiple recognized languages. The reviewer inspected the changes without running tests. At that review date, other Telegram commands still lacked an atomic acknowledgement and source-proven automatic closure was not implemented; later follow-ups record those changes.
 
 ## Follow-up review: durable Telegram commands
 
@@ -40,6 +40,14 @@ GPT-6 Luna (High) reviewed the Jobicy status integration and found that polling 
 The follow-up review identified loss of a successful batch when a later batch failed. Successful batches are now committed separately; a PostgreSQL-backed test covers 101 sources and a failed second batch. Supported Jobicy URL aliases now share an ID-based lookup; ambiguous existing duplicates require attention rather than automatic merging. The reviewer also noted that a temporary page error remains cached for an hour; this avoids a new automated pass inside Jobicy's requested interval and is documented as a limitation.
 
 If the process stops after reserving a Jobicy pass but before storing its first batch, the pass cannot be retried until the hourly reservation expires. Multiple application processes can also concurrently fetch an individual page after reading the same cached status; the intended deployment uses one process. These are open reliability limitations.
+
+## Follow-up: Greenhouse closure evidence, 2026-11-05
+
+An interim implementation adds closure detection for an already observed individual Greenhouse job when its exact public Job Board API endpoint returns `404`. The response must not have redirected, the evidence URL is validated against the same board token and numeric job ID, its provider origin is recorded, and an unobserved URL is not inserted as a closed job. Published `gh_jid`, tracking parameters and fragments are handled without losing the stored identity. Board-level omissions and failures remain non-evidence. Local tests cover the fetch, redirect boundary, evidence validation and PostgreSQL monitor path. This does not yet cover other ATS providers or establish final readiness.
+
+## Follow-up: explicit extraction coverage, 2026-11-05
+
+JSON-LD location and employment type arrays are supported conservatively. Greenhouse API locations and unambiguous title-based internship/graduate-program labels are retained. Ashby's documented public API is requested with compensation enabled; a single Salary component with an explicit month/year interval is stored as monthly pay, while hourly or multiple salary components remain unknown. Individual non-JSON-LD pages with a job-like URL, one explicit `h1`, and an explicit Apply link retain the title and application URL, with other facts left unknown and the source flagged for attention. Russian country-only eligibility is accepted as a location match only for remote postings. Fixture tests cover these mappings; broad source coverage remains incomplete.
 
 ## Follow-up review: Jobicy reopening
 
@@ -56,3 +64,20 @@ GPT-6 Luna (High) identified that `Middle Office` could be misclassified as care
 ## Follow-up review: salary ranges
 
 GPT-6 Luna (High) found that Telegram did not apply range filtering, that valid null and one-sided JSON-LD salary fields were ignored, and that partial updates discarded a previously known bound. These cases have regression tests and fixes across the collector, store, REST and Telegram paths. A later one-sided observation replaces the current range without combining facts from different checks; the previous range remains in history. Tests were run by the implementing agent; the review is not the final audit.
+
+## Final independent review: current worktree, 2026-11-05
+
+Reviewer: GPT-6 Luna, reasoning effort High. The reviewer read the current source, tests, migrations, specification, plan, READMEs and diff. It found one Medium geography-filter defect: a country-only `Russia` preference did not match an explicitly published office location of `Russia`. The matching rule now preserves that match when Russia is the sole selected location, while a country-only office listing remains uncertain when a city is also selected. `TestCountryPreferenceMatchesCountryOnlyOfficeLocation` covers both cases. A focused follow-up review by GPT-6 Luna (High) confirmed the finding is resolved and found no regression in adjacent remote and city-only cases.
+
+The reviewer found no Critical or High defect in the reviewed changes. It confirmed the Greenhouse closure provider is recorded correctly, closure evidence is restricted to the exact unredirected job endpoint and matching board/job ID, and Telegram update mutations use durable idempotency paths. The review was read-only. The reviewer could not run Go checks because Go was absent from its environment; it ran `git diff --check`. The implementing agent separately ran the checks listed below.
+
+### Remaining acceptance gaps
+
+- Extraction is partial. For an unsupported non-JSON-LD page, the collector may retain only a confidently identified title and explicit apply link; company, requirements, level, direction, workload, pay and deadline can remain unknown. Only selected providers expose structured mappings. This does not satisfy broad source coverage or complete field extraction.
+- Confirmed closure is implemented only for Jobicy's status endpoint and previously observed individual Greenhouse postings returning `404` from their exact public endpoint. Other providers and board-level absence are not closure evidence.
+- Global discovery is a bounded Remotive search, and company-site suggestions rely on Wikidata and homepage links. Neither provides comprehensive internet search.
+- Live Telegram delivery, physical-phone usability, other mobile flows and a clean-machine deployment were not verified. The catalog currently loads all stored opportunities rather than paginating SQL results.
+
+### Implementer verification for this review
+
+Using Go 1.27.3 and local PostgreSQL, the implementing agent ran `TEST_DATABASE_URL=... go test -race -count=1 ./...`, `go vet ./...`, `go build ./...`, and `git diff --check`; all passed after the final geography fix. Public smoke checks passed for a Cloudflare Greenhouse posting, an Ashby board, Cloudflare company discovery, and Remotive search for `Go internship`. A local HTTP smoke check verified unauthenticated requests return `401`, authenticated jobs/OpenAPI/Swagger requests return `200`, and `/api/jobs` returns valid JSON. Live Telegram and clean-machine deployment checks were not run.

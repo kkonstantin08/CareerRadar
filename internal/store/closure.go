@@ -99,8 +99,11 @@ func (s *Store) SaveJobicyStatuses(ctx context.Context, statuses map[string]stri
 
 // ConfirmClosedURL closes an already observed URL and retains the supplied evidence.
 func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (bool, error) {
-	if err := validateJobicyEvidence(jobURL, evidence); err != nil {
+	if err := validateClosureEvidence(jobURL, evidence); err != nil {
 		return false, err
+	}
+	if canonical := collector.GreenhouseCanonicalURL(jobURL); canonical != "" {
+		jobURL = canonical
 	}
 	jobURL, err := jobicyStoredURL(ctx, s.db, jobURL)
 	if err != nil {
@@ -114,7 +117,11 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 	if err != nil {
 		return false, err
 	}
-	return true, s.confirmClosed(ctx, id, evidence, "jobicy")
+	origin := "jobicy"
+	if collector.GreenhouseClosureEvidenceURL(jobURL) == evidence {
+		origin = "greenhouse"
+	}
+	return true, s.confirmClosed(ctx, id, evidence, origin)
 }
 
 // ConfirmClosed records the owner's confirmation and its evidence without inferring closure from errors.
@@ -244,6 +251,14 @@ func validateJobicyEvidence(jobURL, evidence string) error {
 		return errors.New("invalid Jobicy evidence")
 	}
 	return nil
+}
+
+func validateClosureEvidence(jobURL, evidence string) error {
+	greenhouseEvidence := collector.GreenhouseClosureEvidenceURL(jobURL)
+	if validateJobicyEvidence(jobURL, evidence) == nil || greenhouseEvidence != "" && greenhouseEvidence == evidence {
+		return nil
+	}
+	return errors.New("invalid source closure evidence")
 }
 
 // Reopen lets the owner correct or reverse a closure while retaining history.

@@ -30,33 +30,105 @@ func TestFetchRejectsFailedAndEmptyPages(t *testing.T) {
 	}
 }
 
+func TestFetchRetainsExplicitHTMLJobTitleWhenStructuredDataIsMissing(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `<html><main><h1>Go Intern</h1><a href="/apply/123">Apply now</a></main></html>`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://careers.example/careers/jobs/go-intern")
+	if err == nil || len(got) != 1 || got[0].Title != "Go Intern" || got[0].URL != "https://careers.example/careers/jobs/go-intern" || got[0].ApplyURL != "https://careers.example/apply/123" || got[0].Company != "" || got[0].Deadline != "" {
+		t.Fatalf("partial HTML job %+v error %v", got, err)
+	}
+}
+
 func TestGreenhousePublicAPI(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Host != "boards-api.greenhouse.io" || r.URL.Path != "/v1/boards/example/jobs/123" {
 			t.Fatalf("API URL %s", r.URL)
 		}
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"title":"Go Intern","company_name":"Example","absolute_url":"https://boards.greenhouse.io/example/jobs/123","application_deadline":"2026-12-01","content":"Build APIs"}`)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"title":"Go Intern","company_name":"Example","absolute_url":"https://boards.greenhouse.io/example/jobs/123","application_deadline":"2026-12-01","location":{"name":"Казань"},"content":"Build APIs"}`)), Header: make(http.Header)}, nil
 	})}
 	jobs, err := Fetch(context.Background(), client, "https://boards.greenhouse.io/example/jobs/123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs) != 1 || jobs[0].Title != "Go Intern" || jobs[0].Company != "Example" || jobs[0].SourceURL != "https://boards.greenhouse.io/example/jobs/123" {
+	if len(jobs) != 1 || jobs[0].Title != "Go Intern" || jobs[0].Company != "Example" || jobs[0].SourceURL != "https://boards.greenhouse.io/example/jobs/123" || jobs[0].Location != "Казань" || jobs[0].Type != "Internship" || jobs[0].Level != "Intern" {
 		t.Fatalf("jobs %+v", jobs)
+	}
+}
+
+func TestGreenhouseJobNotFoundIsExplicitClosureSignal(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://boards-api.greenhouse.io/v1/boards/example/jobs/123" {
+			t.Fatalf("API URL %s", r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Header: make(http.Header)}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://boards.greenhouse.io/example/jobs/123")
+	if err != nil || len(got) != 1 || !got[0].Closed || got[0].URL != "https://boards.greenhouse.io/example/jobs/123" || got[0].SourceURL != "https://boards-api.greenhouse.io/v1/boards/example/jobs/123" {
+		t.Fatalf("closure evidence %+v error %v", got, err)
+	}
+}
+
+func TestGreenhouseBoardNotFoundDoesNotConfirmClosure(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Header: make(http.Header)}, nil
+	})}
+	if got, err := Fetch(context.Background(), client, "https://boards.greenhouse.io/example"); err == nil || len(got) != 0 {
+		t.Fatalf("board failure treated as closure: %+v %v", got, err)
+	}
+}
+
+func TestGreenhouseRedirectedNotFoundDoesNotConfirmClosure(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "boards-api.greenhouse.io" {
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://other.example/missing"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Header: make(http.Header), Request: r}, nil
+	})}
+	if got, err := Fetch(context.Background(), client, "https://boards.greenhouse.io/example/jobs/123"); err == nil || len(got) != 0 {
+		t.Fatalf("redirected 404 treated as closure: %+v %v", got, err)
+	}
+}
+
+func TestGreenhouseClosureEvidenceAcceptsThePublishedJobTrackingLink(t *testing.T) {
+	jobURL := "https://boards.greenhouse.io/example/jobs/123?gh_jid=123&utm_source=career#apply"
+	want := "https://boards-api.greenhouse.io/v1/boards/example/jobs/123"
+	if got := GreenhouseClosureEvidenceURL(jobURL); got != want {
+		t.Fatalf("evidence %q, want %q", got, want)
+	}
+	if got := GreenhouseCanonicalURL(jobURL); got != "https://boards.greenhouse.io/example/jobs/123?gh_jid=123" {
+		t.Fatalf("canonical URL %q", got)
+	}
+	if got := GreenhouseClosureEvidenceURL("https://boards.greenhouse.io/example/jobs/123?gh_jid=124"); got != "" {
+		t.Fatalf("mismatched gh_jid accepted: %q", got)
 	}
 }
 
 func TestAshbyPublicBoard(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.String() != "https://api.ashbyhq.com/posting-api/job-board/example" {
+		if r.URL.String() != "https://api.ashbyhq.com/posting-api/job-board/example?includeCompensation=true" {
 			t.Fatalf("URL %s", r.URL)
 		}
-		body := `{"apiVersion":"1","jobs":[{"title":"Junior Go Engineer","isListed":true,"workplaceType":"Remote","employmentType":"Intern","descriptionPlain":"Build services","jobUrl":"https://jobs.ashbyhq.com/example/abc","applyUrl":"https://jobs.ashbyhq.com/example/abc/application"},{"title":"Unlisted","isListed":false,"jobUrl":"https://jobs.ashbyhq.com/example/hidden"}]}`
+		body := `{"apiVersion":"1","jobs":[{"title":"Junior Go Engineer","isListed":true,"workplaceType":"Remote","employmentType":"Intern","descriptionPlain":"Build services","jobUrl":"https://jobs.ashbyhq.com/example/abc","applyUrl":"https://jobs.ashbyhq.com/example/abc/application","compensation":{"summaryComponents":[{"compensationType":"EquityPercentage","interval":"NONE"},{"compensationType":"Salary","interval":"1 YEAR","currencyCode":"USD","minValue":60000,"maxValue":84000},{"compensationType":"Bonus","interval":"1 YEAR"}]}},{"title":"Unlisted","isListed":false,"jobUrl":"https://jobs.ashbyhq.com/example/hidden"}]}`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
 	})}
 	got, err := Fetch(context.Background(), client, "https://jobs.ashbyhq.com/example")
-	if err != nil || len(got) != 1 || got[0].Title != "Junior Go Engineer" || got[0].WorkMode != "remote" || got[0].Type != "Internship" || got[0].Description != "Build services" || got[0].URL != "https://jobs.ashbyhq.com/example/abc" || got[0].ApplyURL != "https://jobs.ashbyhq.com/example/abc/application" {
+	if err != nil || len(got) != 1 || got[0].Title != "Junior Go Engineer" || got[0].WorkMode != "remote" || got[0].Type != "Internship" || got[0].Description != "Build services" || got[0].URL != "https://jobs.ashbyhq.com/example/abc" || got[0].ApplyURL != "https://jobs.ashbyhq.com/example/abc/application" || got[0].SalaryMin == nil || *got[0].SalaryMin != 5000 || got[0].SalaryMax == nil || *got[0].SalaryMax != 7000 || got[0].Currency != "USD" {
 		t.Fatalf("jobs %+v error %v", got, err)
+	}
+}
+
+func TestAshbyDoesNotGuessAmbiguousOrHourlyCompensation(t *testing.T) {
+	for _, summary := range []string{
+		`[{"compensationType":"Salary","interval":"1 YEAR","currencyCode":"USD","minValue":60000,"maxValue":90000},{"compensationType":"Salary","interval":"1 YEAR","currencyCode":"USD","minValue":80000,"maxValue":110000}]`,
+		`[{"compensationType":"Salary","interval":"1 HOUR","currencyCode":"USD","minValue":50,"maxValue":80}]`,
+	} {
+		body := `{"jobs":[{"title":"Engineer","isListed":true,"workplaceType":"Remote","jobUrl":"https://jobs.ashbyhq.com/example/1","compensation":{"summaryComponents":` + summary + `}}]}`
+		got, err := parseAshby([]byte(body), "https://jobs.ashbyhq.com/example")
+		if err != nil || len(got) != 1 || got[0].Salary != nil || got[0].SalaryMin != nil || got[0].SalaryMax != nil || got[0].Currency != "" {
+			t.Errorf("ambiguous or hourly pay retained: %+v %v", got, err)
+		}
 	}
 }
 

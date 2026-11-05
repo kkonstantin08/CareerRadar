@@ -44,6 +44,19 @@ func TestParseLocationCountryWhenCityMissing(t *testing.T) {
 	}
 }
 
+func TestParseLocationArraysWithoutChoosingAmongMultipleCities(t *testing.T) {
+	for _, tc := range []struct{ locations, want string }{
+		{`[{"address":{"addressLocality":"Казань"}}]`, "Казань"},
+		{`[{"address":{"addressLocality":"Казань"}},{"address":{"addressLocality":"Москва"}}]`, ""},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","jobLocation":` + tc.locations + `}</script>`
+		got, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(got) != 1 || got[0].Location != tc.want {
+			t.Errorf("location %s: %+v %v", tc.locations, got, err)
+		}
+	}
+}
+
 func TestParseRemoteApplicantCountry(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","jobLocationType":"TELECOMMUTE","applicantLocationRequirements":{"@type":"Country","name":"Russia"}}</script>`
 	got, err := Parse(strings.NewReader(body), "https://example.org/job")
@@ -60,6 +73,27 @@ func TestExplicitInternshipType(t *testing.T) {
 	}
 	if jobs[0].Type != "Internship" || jobs[0].Level != "Intern" {
 		t.Fatalf("job %+v", jobs[0])
+	}
+}
+
+func TestTitleProvidesExplicitInternshipAndGraduateProgramType(t *testing.T) {
+	for _, tc := range []struct{ title, want string }{
+		{"Go Intern", "Internship"},
+		{"Data Engineering Graduate Program", "Trainee / Graduate Program"},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","title":"` + tc.title + `"}</script>`
+		got, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(got) != 1 || got[0].Type != tc.want {
+			t.Errorf("%s: %+v %v", tc.title, got, err)
+		}
+	}
+}
+
+func TestInternshipTypeAcceptsEmploymentTypeArray(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Software Engineer","employmentType":["FULL_TIME","INTERN"]}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(got) != 1 || got[0].Type != "Internship" || got[0].Level != "Intern" {
+		t.Fatalf("internship %+v %v", got, err)
 	}
 }
 

@@ -27,8 +27,9 @@ type Message struct {
 
 // Bot handles messages from the linked owner.
 type Bot struct {
-	links links
-	check func(context.Context, int64) (string, error)
+	links      links
+	check      func(context.Context, int64) (string, error)
+	cabinetURL string
 }
 
 type dataStore interface {
@@ -42,6 +43,21 @@ type dataStore interface {
 
 // SetCheck connects manual checks to the shared monitoring service.
 func (b *Bot) SetCheck(check func(context.Context, int64) (string, error)) { b.check = check }
+
+// SetCabinetURL configures an externally reachable HTTPS address for the web cabinet.
+func (b *Bot) SetCabinetURL(raw string) error {
+	if raw == "" {
+		b.cabinetURL = ""
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return errors.New("cabinet URL must be a root HTTPS address without credentials, path, query or fragment")
+	}
+	u.Path = "/"
+	b.cabinetURL = u.String()
+	return nil
+}
 
 // New creates a bot using the shared linking store.
 func New(l interface {
@@ -85,7 +101,13 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		return "", nil
 	}
 	if parts[0] == "/help" || parts[0] == "/start" {
-		return "Команды: /jobs, /sources, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+		return "Команды: /jobs, /sources, /cabinet, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+	}
+	if parts[0] == "/cabinet" {
+		if b.cabinetURL == "" {
+			return "Адрес личного кабинета не настроен.", nil
+		}
+		return "Вакансии: " + b.cabinetURL + "#jobs\nИсточники: " + b.cabinetURL + "#sources\nПоиск: " + b.cabinetURL + "#discovery\nПредпочтения: " + b.cabinetURL + "#preferences\nИстория: " + b.cabinetURL + "#history", nil
 	}
 	data, ok := b.links.(dataStore)
 	if !ok {
@@ -118,6 +140,9 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 				line += "Отклик: " + j.Status + "\n"
 			}
 			line += j.URL + "\n"
+			if b.cabinetURL != "" {
+				line += "В кабинете: " + b.cabinetURL + "#job-" + strconv.FormatInt(j.ID, 10) + "\n"
+			}
 			if out.Len()+len(line) > 3000 {
 				break
 			}

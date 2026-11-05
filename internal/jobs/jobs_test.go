@@ -53,11 +53,11 @@ func TestWorldwideLocationDoesNotProveCountryEligibility(t *testing.T) {
 }
 
 func TestGeographyMatchesCommonEnglishAndRussianNames(t *testing.T) {
-	for _, tc := range []struct{ preference, location string }{
-		{"Россия", "Russia"}, {"Россия", "RU"}, {"Казань", "Kazan"}, {"Иннополис", "Innopolis"},
+	for _, tc := range []struct{ preference, location, mode string }{
+		{"Россия", "Russia", "remote"}, {"Россия", "RU", "remote"}, {"Казань", "Kazan", ""}, {"Иннополис", "Innopolis", ""},
 	} {
 		p := Preferences{Locations: []string{tc.preference}}
-		if got := p.Match(Job{Location: tc.location}); got != Suitable {
+		if got := p.Match(Job{Location: tc.location, WorkMode: tc.mode}); got != Suitable {
 			t.Errorf("%s / %s: %s", tc.preference, tc.location, got)
 		}
 	}
@@ -69,6 +69,29 @@ func TestCountryOnlyDoesNotDisproveSpecificCity(t *testing.T) {
 		if got := p.Match(Job{Location: "RU"}); got != NeedsClarification {
 			t.Fatalf("country does not specify %s: %s", city, got)
 		}
+	}
+}
+
+func TestRussianCountryAloneOnlyConfirmsRemoteEligibility(t *testing.T) {
+	p := Preferences{Locations: []string{"Россия", "Казань", "Иннополис"}}
+	if got := p.Match(Job{Location: "Russia", WorkMode: "remote"}); got != Suitable {
+		t.Fatalf("remote from Russia should match: %s", got)
+	}
+	for _, mode := range []string{"office", "hybrid", ""} {
+		if got := p.Match(Job{Location: "Russia", WorkMode: mode}); got != NeedsClarification {
+			t.Errorf("country-only %s offer must remain uncertain: %s", mode, got)
+		}
+	}
+}
+
+func TestCountryPreferenceMatchesCountryOnlyOfficeLocation(t *testing.T) {
+	p := Preferences{Locations: []string{"Россия"}}
+	if got := p.Match(Job{Location: "Russia", WorkMode: "office"}); got != Suitable {
+		t.Fatalf("explicit country-only preference should match: %s", got)
+	}
+	p.Locations = []string{"Россия", "Казань"}
+	if got := p.Match(Job{Location: "Russia", WorkMode: "office"}); got != NeedsClarification {
+		t.Fatalf("country does not prove office city: %s", got)
 	}
 }
 

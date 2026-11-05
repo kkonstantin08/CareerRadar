@@ -51,6 +51,9 @@ func main() {
 	go checks.RunManualChecks(ctx)
 	if token := os.Getenv("TELEGRAM_BOT_TOKEN"); token != "" {
 		bot := telegram.New(db)
+		if err := bot.SetCabinetURL(os.Getenv("CABINET_URL")); err != nil {
+			log.Fatal(err)
+		}
 		bot.SetCheck(checks.Check)
 		go bot.Run(ctx, token)
 		go telegram.Deliver(ctx, db, token)

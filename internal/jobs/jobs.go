@@ -56,14 +56,16 @@ func (p Preferences) Match(j Job) Match {
 		location = ""
 	}
 	if location == "россия" {
-		match := false
+		countryAllowed, cityAllowed := false, false
 		for _, allowed := range locations {
 			if allowed == "россия" {
-				match = true
-				break
+				countryAllowed = true
+			} else if allowed != "" {
+				cityAllowed = true
 			}
 		}
-		if !match && len(locations) > 0 {
+		// Country-level eligibility is useful for remote work but does not identify a permitted office city.
+		if !countryAllowed || j.WorkMode != "remote" && cityAllowed {
 			location = ""
 		}
 	}

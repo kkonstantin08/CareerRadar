@@ -117,6 +117,33 @@ func TestOwnerCanViewJobsAndChangeStatus(t *testing.T) {
 	}
 }
 
+func TestCabinetLinksUseConfiguredPublicAddress(t *testing.T) {
+	f := &fakeData{}
+	f.linked = 5
+	b := New(f)
+	if err := b.SetCabinetURL("https://career.example/"); err != nil {
+		t.Fatal(err)
+	}
+	got := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/cabinet"})
+	for _, want := range []string{"https://career.example/#jobs", "https://career.example/#sources", "https://career.example/#discovery", "https://career.example/#preferences", "https://career.example/#history"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %q", want, got)
+		}
+	}
+	jobsReply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"})
+	if !strings.Contains(jobsReply, "https://career.example/#job-7") {
+		t.Fatalf("job link missing: %q", jobsReply)
+	}
+	if err := b.SetCabinetURL("https://user:secret@career.example/"); err == nil {
+		t.Fatal("credentials in URL accepted")
+	}
+	for _, raw := range []string{"http://career.example/", "https://career.example/app", "https://career.example/?x=1", "https://career.example/#jobs"} {
+		if err := b.SetCabinetURL(raw); err == nil {
+			t.Errorf("invalid cabinet URL accepted: %q", raw)
+		}
+	}
+}
+
 type clarificationData struct{ fakeData }
 
 func (f *clarificationData) Preferences(context.Context) (jobs.Preferences, error) {

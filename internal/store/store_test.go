@@ -10,6 +10,7 @@ import (
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -411,6 +412,13 @@ func TestPreferencesRoundTrip(t *testing.T) {
 	got, err := db.Preferences(ctx)
 	if err != nil || len(got.Levels) != 2 || len(got.Languages) != 1 || got.Languages[0] != "Go" {
 		t.Fatalf("preferences %+v %v", got, err)
+	}
+}
+
+func TestInitialPreferencesIncludeGoAndPython(t *testing.T) {
+	p := initialPreferences()
+	if !slices.Contains(p.Languages, "Go") || !slices.Contains(p.Languages, "Python") || p.MaxHours == nil || *p.MaxHours != 30 {
+		t.Fatalf("initial preferences %+v", p)
 	}
 }
 
@@ -1308,6 +1316,63 @@ func TestJobicyReopenPreservesOwnerClosure(t *testing.T) {
 	}
 	if !ownerEvidenceFound || !ownerHistoryFound {
 		t.Fatalf("owner evidence %v, history %v", ownerEvidenceFound, ownerHistoryFound)
+	}
+}
+
+func TestGreenhouseClosureEvidenceMustMatchPublishedJob(t *testing.T) {
+	jobURL := "https://boards.greenhouse.io/example/jobs/123"
+	evidence := "https://boards-api.greenhouse.io/v1/boards/example/jobs/123"
+	if err := validateClosureEvidence(jobURL, evidence); err != nil {
+		t.Fatalf("valid Greenhouse evidence rejected: %v", err)
+	}
+	for _, invalid := range []struct{ job, evidence string }{
+		{jobURL, "https://boards-api.greenhouse.io/v1/boards/example/jobs/124"},
+		{"https://boards.greenhouse.io/other/jobs/123", evidence},
+		{jobURL, "https://attacker.example/v1/boards/example/jobs/123"},
+	} {
+		if err := validateClosureEvidence(invalid.job, invalid.evidence); err == nil {
+			t.Errorf("mismatched evidence accepted for %s: %s", invalid.job, invalid.evidence)
+		}
+	}
+}
+
+func TestGreenhouseClosureRecordsItsProviderOrigin(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	jobID := time.Now().UnixNano()%1000000000000 + 1
+	baseURL := fmt.Sprintf("https://boards.greenhouse.io/careerradar-test/jobs/%d", jobID)
+	jobURL := fmt.Sprintf("%s?gh_jid=%d", baseURL, jobID)
+	sourceURL := jobURL + "&utm_source=smoke#apply"
+	evidence := fmt.Sprintf("https://boards-api.greenhouse.io/v1/boards/careerradar-test/jobs/%d", jobID)
+	source, err := db.AddSource(ctx, "Greenhouse closure origin", sourceURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, source.ID)
+	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, jobURL)
+	if _, err = db.Observe(ctx, Observation{SourceID: source.ID, URL: sourceURL, Title: "Go Engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	var storedID int64
+	if err = db.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&storedID); err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", storedID))
+	closed, err := db.ConfirmClosedURL(ctx, sourceURL, evidence)
+	if err != nil || !closed {
+		t.Fatalf("close result %v %v", closed, err)
+	}
+	var origin string
+	if err = db.db.QueryRowContext(ctx, `SELECT closed_by FROM jobs WHERE url=$1`, jobURL).Scan(&origin); err != nil || origin != "greenhouse" {
+		t.Fatalf("closure origin %q error %v", origin, err)
 	}
 }
 

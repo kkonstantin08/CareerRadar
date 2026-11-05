@@ -39,6 +39,8 @@ type Job struct {
 
 var weeklyHours = regexp.MustCompile(`(?i)^\s*(\d{1,3})\s*(?:hours? per week|hours? a week|час(?:ов|а)? в неделю)\s*$`)
 var levelInTitle = regexp.MustCompile(`(?i)\b(intern|junior|senior)\b`)
+var internshipTitle = regexp.MustCompile(`(?i)\b(intern|internship)\b`)
+var graduateProgramTitle = regexp.MustCompile(`(?i)\b(trainee|graduate\s+program(?:me)?)\b`)
 var middleRole = regexp.MustCompile(`(?i)\bmiddle[\s-]+(?:(?:go|python|java|backend|frontend|fullstack|software|qa|devops)[\s-]+)?(?:developer|engineer|programmer)\b`)
 var mixedMiddle = regexp.MustCompile(`(?i)\bmiddle(?:\s*[-/|–—]\s*|\s+to\s+)(?:junior|senior)\b`)
 
@@ -77,25 +79,35 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				company, _ = org["name"].(string)
 			}
 			location, mode := "", ""
-			if place, ok := v["jobLocation"].(map[string]any); ok {
+			var locations []string
+			for _, place := range schemaObjects(v["jobLocation"]) {
 				if addr, ok := place["address"].(map[string]any); ok {
-					location, _ = addr["addressLocality"].(string)
-					if strings.TrimSpace(location) == "" {
-						location, _ = addr["addressCountry"].(string)
+					value, _ := addr["addressLocality"].(string)
+					if strings.TrimSpace(value) == "" {
+						value, _ = addr["addressCountry"].(string)
+					}
+					if value = strings.TrimSpace(value); value != "" && !contains(locations, value) {
+						locations = append(locations, value)
 					}
 				}
 			}
+			// Selecting one of several published locations would silently narrow the listing's eligibility.
+			if len(locations) == 1 {
+				location = locations[0]
+			}
 			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {
 				mode = "remote"
-				if area, ok := v["applicantLocationRequirements"].(map[string]any); ok && area["@type"] == "Country" {
+				areas := schemaObjects(v["applicantLocationRequirements"])
+				if len(areas) == 1 && areas[0]["@type"] == "Country" {
+					area := areas[0]
 					if country, ok := area["name"].(string); ok && strings.TrimSpace(country) != "" {
 						location = country
 					}
 				}
 			}
-			offerType := ""
+			offerType := titleType(str("title"))
 			level, ambiguous := titleLevel(str("title"))
-			if strings.EqualFold(str("employmentType"), "INTERN") {
+			if schemaContains(v["employmentType"], "INTERN") {
 				offerType = "Internship"
 				if !ambiguous && (level == "" || level == "Intern") {
 					level = "Intern"
@@ -183,6 +195,37 @@ func salaryAmount(value any) *int64 {
 	return &amount
 }
 
+func schemaObjects(value any) []map[string]any {
+	switch value := value.(type) {
+	case map[string]any:
+		return []map[string]any{value}
+	case []any:
+		objects := make([]map[string]any, 0, len(value))
+		for _, item := range value {
+			if object, ok := item.(map[string]any); ok {
+				objects = append(objects, object)
+			}
+		}
+		return objects
+	default:
+		return nil
+	}
+}
+
+func schemaContains(value any, wanted string) bool {
+	switch value := value.(type) {
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), wanted)
+	case []any:
+		for _, item := range value {
+			if text, ok := item.(string); ok && strings.EqualFold(strings.TrimSpace(text), wanted) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func titleLevel(title string) (string, bool) {
 	level := ""
 	if mixedMiddle.MatchString(title) {
@@ -199,6 +242,16 @@ func titleLevel(title string) (string, bool) {
 		level = found
 	}
 	return level, false
+}
+
+func titleType(title string) string {
+	if internshipTitle.MatchString(title) {
+		return "Internship"
+	}
+	if graduateProgramTitle.MatchString(title) {
+		return "Trainee / Graduate Program"
+	}
+	return ""
 }
 
 func contains(values []string, value string) bool {

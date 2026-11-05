@@ -111,6 +111,13 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 	}
 	if api := greenhouseURL(root); api != "" {
 		body, _, err := readPage(ctx, client, api)
+		var responseErr *httpStatusError
+		// A 404 is closure evidence only when the exact job endpoint returned it without redirecting.
+		if errors.As(err, &responseErr) && errors.Is(err, errNotFound) && responseErr.url == api {
+			if evidence := GreenhouseClosureEvidenceURL(root.String()); evidence != "" {
+				return []Job{{URL: root.String(), SourceURL: evidence, Closed: true}}, nil
+			}
+		}
 		if errors.Is(err, errResponseTooLarge) && strings.HasSuffix(api, "?content=true") {
 			body, _, err = readPage(ctx, client, strings.TrimSuffix(api, "?content=true"))
 			if err == nil {
@@ -156,6 +163,17 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		if err != nil {
 			problem = err
 			continue
+		}
+		if len(extracted) == 0 {
+			partial, ok, fallbackErr := parseHTMLJob(body, actual)
+			if ok {
+				extracted = []Job{partial}
+				if fallbackErr != nil {
+					problem = fallbackErr
+				} else {
+					problem = errors.New("incomplete job page; source requires attention")
+				}
+			}
 		}
 		pageURL, err := url.Parse(actual)
 		if err != nil {
@@ -258,6 +276,64 @@ func applicationLink(body []byte, base *url.URL) (string, error) {
 	return "", nil
 }
 
+// shortcut: fallback only recognizes individual job URLs with an explicit Apply link; unsupported layouts need a source-specific adapter.
+func parseHTMLJob(body []byte, source string) (Job, bool, error) {
+	u, err := url.Parse(source)
+	if err != nil || !individualJobURL(u) {
+		return Job{}, false, nil
+	}
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return Job{}, false, err
+	}
+	title := ""
+	ambiguous := false
+	var findTitle func(*html.Node)
+	findTitle = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "h1" {
+			value := strings.Join(strings.Fields(textContent(n)), " ")
+			if title != "" && value != title {
+				ambiguous = true
+			} else if value != "" {
+				title = value
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			findTitle(child)
+		}
+	}
+	findTitle(doc)
+	if title == "" || ambiguous {
+		return Job{}, false, nil
+	}
+	applyURL, err := applicationLink(body, u)
+	job := Job{URL: source, SourceURL: source, Title: title}
+	if err != nil {
+		return job, true, err
+	}
+	if applyURL == "" {
+		return Job{}, false, nil
+	}
+	job.ApplyURL = applyURL
+	job.Level, _ = titleLevel(title)
+	job.Type = titleType(title)
+	return job, true, nil
+}
+
+func individualJobURL(u *url.URL) bool {
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i, part := range parts[:len(parts)-1] {
+		switch strings.ToLower(part) {
+		case "job", "jobs", "vacancy", "vacancies", "position", "positions":
+			return i+1 < len(parts) && parts[i+1] != ""
+		}
+	}
+	return false
+}
+
 // JobicyID returns the listing ID for a supported individual Jobicy URL.
 func JobicyID(raw string) string {
 	u, err := url.Parse(raw)
@@ -343,6 +419,60 @@ func JobicyCanonicalURL(raw string) string {
 	return u.String()
 }
 
+// GreenhouseClosureEvidenceURL returns the exact public endpoint for one known Greenhouse job.
+func GreenhouseClosureEvidenceURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || (u.Hostname() != "boards.greenhouse.io" && u.Hostname() != "job-boards.greenhouse.io") || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.RawPath != "" || u.ForceQuery {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 3 || parts[1] != "jobs" || parts[0] == "" {
+		return ""
+	}
+	for _, r := range parts[0] {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return ""
+		}
+	}
+	id, err := strconv.ParseUint(parts[2], 10, 53)
+	if err != nil || id == 0 || strconv.FormatUint(id, 10) != parts[2] {
+		return ""
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return ""
+	}
+	hasJobID := false
+	for key, values := range query {
+		if strings.EqualFold(key, "gh_jid") {
+			if hasJobID || len(values) != 1 || values[0] != parts[2] {
+				return ""
+			}
+			hasJobID = true
+		} else if !strings.HasPrefix(strings.ToLower(key), "utm_") {
+			return ""
+		}
+	}
+	return "https://boards-api.greenhouse.io/v1/boards/" + parts[0] + "/jobs/" + parts[2]
+}
+
+// GreenhouseCanonicalURL removes tracking data from a supported individual job link.
+func GreenhouseCanonicalURL(raw string) string {
+	if GreenhouseClosureEvidenceURL(raw) == "" {
+		return ""
+	}
+	u, _ := url.Parse(raw)
+	u.Fragment = ""
+	query := u.Query()
+	for key := range query {
+		if strings.HasPrefix(strings.ToLower(key), "utm_") {
+			query.Del(key)
+		}
+	}
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
 // IsJobicyURL reports whether a URL belongs to Jobicy.
 func IsJobicyURL(raw string) bool {
 	u, err := url.Parse(raw)
@@ -354,6 +484,23 @@ func IsJobicyURL(raw string) bool {
 }
 
 var errResponseTooLarge = errors.New("source response too large")
+var errNotFound = errors.New("source returned HTTP 404")
+
+type httpStatusError struct {
+	status int
+	url    string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("source returned HTTP %s", strconv.Itoa(e.status))
+}
+
+func (e *httpStatusError) Unwrap() error {
+	if e.status == http.StatusNotFound {
+		return errNotFound
+	}
+	return nil
+}
 
 func readPage(ctx context.Context, client *http.Client, uri string) ([]byte, string, error) {
 	return readPageLimit(ctx, client, uri, 2<<20)
@@ -371,7 +518,11 @@ func readPageLimit(ctx context.Context, client *http.Client, uri string, limit i
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("source returned HTTP %s", strconv.Itoa(res.StatusCode))
+		actual := req.URL.String()
+		if res.Request != nil && res.Request.URL != nil {
+			actual = res.Request.URL.String()
+		}
+		return nil, "", &httpStatusError{status: res.StatusCode, url: actual}
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
@@ -473,6 +624,9 @@ func parseGreenhouse(body []byte, source string) ([]Job, error) {
 		URL      string `json:"absolute_url"`
 		Deadline string `json:"application_deadline"`
 		Content  string `json:"content"`
+		Location struct {
+			Name string `json:"name"`
+		} `json:"location"`
 	}
 	var list struct {
 		Jobs []item `json:"jobs"`
@@ -499,7 +653,9 @@ func parseGreenhouse(body []byte, source string) ([]Job, error) {
 	}
 	jobs := make([]Job, 0, len(items))
 	for _, x := range items {
-		jobs = append(jobs, Job{Title: x.Title, Company: x.Company, URL: x.URL, Deadline: x.Deadline, Description: x.Content, SourceURL: source})
+		level, _ := titleLevel(x.Title)
+		offerType := titleType(x.Title)
+		jobs = append(jobs, Job{Title: x.Title, Company: x.Company, URL: x.URL, Deadline: x.Deadline, Description: x.Content, Location: x.Location.Name, Type: offerType, Level: level, SourceURL: source})
 	}
 	return jobs, nil
 }

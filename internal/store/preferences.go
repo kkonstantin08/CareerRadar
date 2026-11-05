@@ -20,8 +20,7 @@ func readPreferences(ctx context.Context, db interface {
 	var data []byte
 	err := db.QueryRowContext(ctx, `SELECT data FROM preferences WHERE singleton=true`).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
-		hours := 30
-		return jobs.Preferences{Directions: []string{"Backend", "Frontend", "Fullstack", "AI/ML/DS", "Data Engineering", "DevOps", "QA Automation"}, Locations: []string{"Россия", "Казань", "Иннополис"}, MaxHours: &hours}, nil
+		return initialPreferences(), nil
 	}
 	if err != nil {
 		return jobs.Preferences{}, err
@@ -29,6 +28,16 @@ func readPreferences(ctx context.Context, db interface {
 	var p jobs.Preferences
 	err = json.Unmarshal(data, &p)
 	return p, err
+}
+
+func initialPreferences() jobs.Preferences {
+	hours := 30
+	return jobs.Preferences{
+		Directions: []string{"Backend", "Frontend", "Fullstack", "AI/ML/DS", "Data Engineering", "DevOps", "QA Automation"},
+		Languages:  []string{"Go", "Python"},
+		Locations:  []string{"Россия", "Казань", "Иннополис"},
+		MaxHours:   &hours,
+	}
 }
 
 // SavePreferences replaces the owner's filters atomically.
