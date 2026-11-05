@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jobs>
+  <job>
+    <id><![CDATA[4f816f9a-7f03-4e18-9710-6ec9a9c0d40e]]></id>
+    <position><![CDATA[Go Intern]]></position>
+    <description><![CDATA[<div>Build backend services</div><ul><li>Learn Go</li></ul>]]></description>
+    <apply_url><![CDATA[https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e/apply?lever-source=career-radar]]></apply_url>
+    <employer><![CDATA[Example Company]]></employer>
+    <location><![CDATA[Kazan, Russia]]></location>
+    <category><![CDATA[Engineering]]></category>
+    <commitment><![CDATA[Internship]]></commitment>
+    <post_date>1568068777313</post_date>
+  </job>
+  <job>
+    <id><![CDATA[ac4282d3-b506-4f89-a6eb-9ff7c5ea0f7c]]></id>
+    <position><![CDATA[Backend Engineer]]></position>
+    <description><![CDATA[Design reliable services]]></description>
+    <apply_url><![CDATA[https://jobs.lever.co/examplecompany/ac4282d3-b506-4f89-a6eb-9ff7c5ea0f7c/apply]]></apply_url>
+    <employer><![CDATA[Example Company]]></employer>
+    <location><![CDATA[Remote — Russia]]></location>
+    <category><![CDATA[Engineering]]></category>
+    <commitment><![CDATA[Full-Time]]></commitment>
+    <post_date>1568068777313</post_date>
+  </job>
+</jobs>

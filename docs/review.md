@@ -81,3 +81,15 @@ The reviewer found no Critical or High defect in the reviewed changes. It confir
 ### Implementer verification for this review
 
 Using Go 1.27.3 and local PostgreSQL, the implementing agent ran `TEST_DATABASE_URL=... go test -race -count=1 ./...`, `go vet ./...`, `go build ./...`, and `git diff --check`; all passed after the final geography fix. Public smoke checks passed for a Cloudflare Greenhouse posting, an Ashby board, Cloudflare company discovery, and Remotive search for `Go internship`. A local HTTP smoke check verified unauthenticated requests return `401`, authenticated jobs/OpenAPI/Swagger requests return `200`, and `/api/jobs` returns valid JSON. Live Telegram and clean-machine deployment checks were not run.
+
+## Implementation follow-up after the final review
+
+The collector now also reads nested schema.org Microdata when JSON-LD yields no record, parses explicitly marked EducationalOccupationalProgram entries, retains published prerequisites and job qualifications in the description, and recognizes common Russian title variants for levels and offer types. It restricts full-IRI schema types to the schema.org namespace and ignores foreign namespaces. A new Lever adapter reads the vendor's public XML postings feed for board and individual posting URLs; missing postings cause a source warning and never close an existing job. Regression fixtures cover Microdata, education programs, full-IRI namespaces, structured requirements, Russian labels, and Lever's fields and apply-link validation. A targeted independent follow-up review and its fixes are recorded below; it did not re-audit the rest of the repository.
+
+The Lever public feed format used here has no deadline or salary fields. Microdata `itemref` remains unsupported. Global discovery remains a bounded Remotive search, and broad source coverage and dynamic JavaScript rendering remain outside current implementation.
+
+## Targeted independent follow-up: Microdata and Lever, 2026-11-05
+
+Reviewer: GPT-6 Luna, reasoning effort High. The reviewer found that Lever's composite locations (`Kazan, Russia` and `Remote — Russia`) did not match the initial geography preferences, and that valid Microdata with multiple space-separated `itemtype` values was discarded after detection. Both fixes now have regression tests: Lever normalizes only recognized locations and explicit modes, and Microdata selects the supported schema.org type. A follow-up noticed that conflicting Lever markers such as `Remote / Office` could be misclassified; the parser now leaves conflicting modes unknown, covered by `TestLeverWorkModeLeavesConflictingMarkersUnknown`.
+
+The reviewer confirmed all three findings are resolved and found no related regression. It performed a read-only review and `git diff --check`; Go was unavailable in its environment, so it did not run tests. The implementing agent separately ran the focused and full race test suites, vet, build, and the Lever public-source smoke check. This targeted review does not replace the full-worktree audit above.

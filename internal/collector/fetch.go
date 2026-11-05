@@ -143,6 +143,17 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		}
 		return parseAshby(body, root.String())
 	}
+	if site, id, ok := leverBoard(root); ok {
+		api := "https://api.lever.co/v0/postings/" + url.PathEscape(site) + "?mode=xml"
+		body, actual, err := readPage(ctx, client, api)
+		if err != nil {
+			return nil, err
+		}
+		if actual != api {
+			return nil, errors.New("unexpected Lever API redirect; source requires attention")
+		}
+		return parseLever(body, root.String(), site, id)
+	}
 	type page struct {
 		url   string
 		depth int

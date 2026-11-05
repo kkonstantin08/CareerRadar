@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -38,13 +39,14 @@ type Job struct {
 }
 
 var weeklyHours = regexp.MustCompile(`(?i)^\s*(\d{1,3})\s*(?:hours? per week|hours? a week|час(?:ов|а)? в неделю)\s*$`)
-var levelInTitle = regexp.MustCompile(`(?i)\b(intern|junior|senior)\b`)
-var internshipTitle = regexp.MustCompile(`(?i)\b(intern|internship)\b`)
-var graduateProgramTitle = regexp.MustCompile(`(?i)\b(trainee|graduate\s+program(?:me)?)\b`)
-var middleRole = regexp.MustCompile(`(?i)\bmiddle[\s-]+(?:(?:go|python|java|backend|frontend|fullstack|software|qa|devops)[\s-]+)?(?:developer|engineer|programmer)\b`)
-var mixedMiddle = regexp.MustCompile(`(?i)\bmiddle(?:\s*[-/|–—]\s*|\s+to\s+)(?:junior|senior)\b`)
+var levelInTitle = regexp.MustCompile(`(?i)\b(intern|junior|senior)\b|(?:^|[^\pL\pN])(?:стаж[её]р|джун(?:иор)?|сеньор|сениор|младш(?:ий|ая|ее|ие)|старш(?:ий|ая|ее|ие))(?:$|[^\pL\pN])`)
+var internshipTitle = regexp.MustCompile(`(?i)\b(intern|internship)\b|(?:^|[^\pL\pN])стаж[её]р(?:$|[^\pL\pN])|(?:^|[^\pL\pN])стажировка(?:$|[^\pL\pN])`)
+var graduateProgramTitle = regexp.MustCompile(`(?i)\b(trainee|graduate\s+program(?:me)?)\b|(?:^|[^\pL\pN])программа\s+(?:для\s+)?выпускников(?:$|[^\pL\pN])`)
+var educationProgramTitle = regexp.MustCompile(`(?i)\b(?:boot\s?camp|educational\s+program(?:me)?|education\s+program(?:me)?)\b|(?:^|[^\pL\pN])(?:буткемп|образовательная\s+программа|обучающая\s+программа)(?:$|[^\pL\pN])`)
+var middleRole = regexp.MustCompile(`(?i)\bmiddle[\s-]+(?:(?:go|python|java|backend|frontend|fullstack|software|qa|devops)[\s-]+)?(?:developer|engineer|programmer)\b|(?:^|[^\pL\pN])мидл[\s-]+(?:(?:go|python|java|бэкенд|фронтенд|backend|frontend)[\s-]+)?(?:разработчик|инженер|программист|тестировщик|специалист)(?:$|[^\pL\pN])`)
+var mixedMiddle = regexp.MustCompile(`(?i)\bmiddle(?:\s*[-/|–—]\s*|\s+to\s+)(?:junior|senior)\b|(?:^|[^\pL\pN])мидл\s*[-/|–—]\s*(?:джун|сеньор)(?:$|[^\pL\pN])`)
 
-// Parse extracts schema.org JobPosting records from HTML without inferring facts.
+// Parse extracts supported schema.org job and education program records from HTML without inferring facts.
 func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	doc, err := html.Parse(r)
 	if err != nil {
@@ -62,29 +64,27 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if graph, ok := v["@graph"]; ok {
 				extract(graph)
 			}
-			posting := v["@type"] == "JobPosting"
-			if types, ok := v["@type"].([]any); ok {
-				for _, typ := range types {
-					if typ == "JobPosting" {
-						posting = true
-					}
-				}
-			}
-			if !posting {
+			posting := schemaTypeContains(v["@type"], "JobPosting")
+			program := schemaTypeContains(v["@type"], "EducationalOccupationalProgram")
+			if !posting && !program {
 				return
 			}
 			str := func(key string) string { s, _ := v[key].(string); return s }
 			company := ""
-			if org, ok := v["hiringOrganization"].(map[string]any); ok {
+			organization, _ := v["hiringOrganization"].(map[string]any)
+			if program {
+				organization, _ = v["provider"].(map[string]any)
+			}
+			if org := organization; org != nil {
 				company, _ = org["name"].(string)
 			}
 			location, mode := "", ""
 			var locations []string
 			for _, place := range schemaObjects(v["jobLocation"]) {
 				if addr, ok := place["address"].(map[string]any); ok {
-					value, _ := addr["addressLocality"].(string)
+					value := schemaText(addr["addressLocality"])
 					if strings.TrimSpace(value) == "" {
-						value, _ = addr["addressCountry"].(string)
+						value = schemaText(addr["addressCountry"])
 					}
 					if value = strings.TrimSpace(value); value != "" && !contains(locations, value) {
 						locations = append(locations, value)
@@ -98,15 +98,42 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {
 				mode = "remote"
 				areas := schemaObjects(v["applicantLocationRequirements"])
-				if len(areas) == 1 && areas[0]["@type"] == "Country" {
+				if len(areas) == 1 && schemaTypeContains(areas[0]["@type"], "Country") {
 					area := areas[0]
-					if country, ok := area["name"].(string); ok && strings.TrimSpace(country) != "" {
+					if country := schemaText(area["name"]); country != "" {
 						location = country
 					}
 				}
 			}
-			offerType := titleType(str("title"))
-			level, ambiguous := titleLevel(str("title"))
+			title := str("title")
+			deadline := str("validThrough")
+			description := str("description")
+			if program {
+				title = str("name")
+				deadline = str("applicationDeadline")
+				mode = programWorkMode(str("educationalProgramMode"))
+			}
+			requirements := []struct {
+				label string
+				value any
+			}{{"Qualifications", v["qualifications"]}, {"Education requirements", v["educationRequirements"]}, {"Experience requirements", v["experienceRequirements"]}}
+			if program {
+				requirements = []struct {
+					label string
+					value any
+				}{{"Prerequisites", v["programPrerequisites"]}}
+			}
+			for _, requirement := range requirements {
+				value := schemaText(requirement.value)
+				if value != "" && !strings.Contains(strings.ToLower(description), strings.ToLower(value)) {
+					description = strings.TrimSpace(description + "\n\n" + requirement.label + ": " + value)
+				}
+			}
+			offerType := titleType(title)
+			if program {
+				offerType = "Education / Bootcamp"
+			}
+			level, ambiguous := titleLevel(title)
 			if schemaContains(v["employmentType"], "INTERN") {
 				offerType = "Internship"
 				if !ambiguous && (level == "" || level == "Intern") {
@@ -163,7 +190,7 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			sort.Strings(languages)
 			language := strings.Join(languages, ", ")
-			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: str("title"), Company: company, Description: str("description"), Deadline: str("validThrough"), URL: str("url"), SourceURL: sourceURL})
+			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: title, Company: company, Description: description, Deadline: deadline, URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)
@@ -183,7 +210,196 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 		}
 	}
 	walk(doc)
+	if len(result) == 0 {
+		var walkMicrodata func(*html.Node)
+		walkMicrodata = func(n *html.Node) {
+			if n.Type == html.ElementNode && isOpportunityItem(n) {
+				// Prefer JSON-LD when a page publishes both formats to avoid duplicate observations.
+				if value := microdataItem(n); value != nil {
+					extract(value)
+				}
+				return
+			}
+			for child := n.FirstChild; child != nil; child = child.NextSibling {
+				walkMicrodata(child)
+			}
+		}
+		walkMicrodata(doc)
+	}
 	return result, nil
+}
+
+func isOpportunityItem(n *html.Node) bool {
+	if !hasAttribute(n, "itemscope") {
+		return false
+	}
+	for _, raw := range strings.Fields(attribute(n, "itemtype")) {
+		name := schemaTypeName(raw)
+		if name == "JobPosting" || name == "EducationalOccupationalProgram" {
+			return true
+		}
+	}
+	return false
+}
+
+func programWorkMode(value string) string {
+	switch strings.ToLower(strings.Join(strings.Fields(value), " ")) {
+	case "online", "remote", "distance learning":
+		return "remote"
+	case "onsite", "on-site", "in person", "in-person":
+		return "office"
+	case "blended", "hybrid":
+		return "hybrid"
+	default:
+		return ""
+	}
+}
+
+// shortcut: itemref is not followed; support it if a real monitored page places Microdata properties outside their item scope.
+func microdataItem(n *html.Node) map[string]any {
+	var typeName string
+	for _, raw := range strings.Fields(attribute(n, "itemtype")) {
+		name := schemaTypeName(raw)
+		if name == "JobPosting" || name == "EducationalOccupationalProgram" {
+			typeName = name
+			break
+		}
+	}
+	item := map[string]any{"@type": typeName}
+	properties := make(map[string][]any)
+	var collect func(*html.Node)
+	collect = func(parent *html.Node) {
+		for child := parent.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type != html.ElementNode {
+				continue
+			}
+			if hasAttribute(child, "itemscope") {
+				if names := strings.Fields(attribute(child, "itemprop")); len(names) > 0 {
+					value := any(microdataItem(child))
+					for _, name := range names {
+						properties[name] = append(properties[name], value)
+					}
+				}
+				continue
+			}
+			if names := strings.Fields(attribute(child, "itemprop")); len(names) > 0 {
+				for _, name := range names {
+					properties[name] = append(properties[name], microdataValue(child, name))
+				}
+				continue
+			}
+			collect(child)
+		}
+	}
+	collect(n)
+	for name, values := range properties {
+		if len(values) == 1 {
+			item[name] = values[0]
+		} else {
+			item[name] = values
+		}
+	}
+	return item
+}
+
+func schemaTypeContains(value any, wanted string) bool {
+	switch value := value.(type) {
+	case string:
+		return strings.EqualFold(schemaTypeName(value), wanted)
+	case []any:
+		for _, item := range value {
+			if raw, ok := item.(string); ok && strings.EqualFold(schemaTypeName(raw), wanted) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func microdataValue(n *html.Node, property string) any {
+	for _, key := range []string{"content", "datetime", "href", "src", "value", "data"} {
+		if value := attribute(n, key); value != "" {
+			if property == "value" || property == "minValue" || property == "maxValue" {
+				if number, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
+					return number
+				}
+			}
+			return strings.TrimSpace(value)
+		}
+	}
+	value := strings.Join(strings.Fields(textContent(n)), " ")
+	if property == "value" || property == "minValue" || property == "maxValue" {
+		if number, err := strconv.ParseFloat(value, 64); err == nil {
+			return number
+		}
+	}
+	return value
+}
+
+func schemaTypeName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || (u.Hostname() != "schema.org" && u.Hostname() != "www.schema.org") || u.User != nil || u.Port() != "" || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" {
+			return ""
+		}
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) == 1 {
+			return parts[0]
+		}
+		return ""
+	}
+	if strings.ContainsAny(raw, ":/?#") {
+		return ""
+	}
+	return raw
+}
+
+func schemaText(value any) string {
+	switch value := value.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	case []any:
+		var parts []string
+		for _, item := range value {
+			if text := schemaText(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case map[string]any:
+		if months, ok := value["monthsOfExperience"]; ok {
+			if text := schemaText(months); text != "" {
+				return text + " months of experience"
+			}
+		}
+		for _, key := range []string{"credentialCategory", "description", "name", "text"} {
+			if text := schemaText(value[key]); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func hasAttribute(n *html.Node, name string) bool {
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func attribute(n *html.Node, name string) string {
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, name) {
+			return attr.Val
+		}
+	}
+	return ""
 }
 
 func salaryAmount(value any) *int64 {
@@ -235,7 +451,7 @@ func titleLevel(title string) (string, bool) {
 		level = "Middle"
 	}
 	for _, match := range levelInTitle.FindAllString(title, -1) {
-		found := recognized(match, []string{"Intern", "Junior", "Middle", "Senior"})
+		found := titleLevelName(match)
 		if level != "" && level != found {
 			return "", true
 		}
@@ -244,14 +460,36 @@ func titleLevel(title string) (string, bool) {
 	return level, false
 }
 
+func titleLevelName(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "стажер", "стажёр":
+		return "Intern"
+	case "младший", "младшая", "младшее", "младшие", "джун", "джуниор":
+		return "Junior"
+	case "старший", "старшая", "старшее", "старшие", "сеньор", "сениор":
+		return "Senior"
+	default:
+		return recognized(value, []string{"Intern", "Junior", "Middle", "Senior"})
+	}
+}
+
 func titleType(title string) string {
-	if internshipTitle.MatchString(title) {
+	internship := internshipTitle.MatchString(title)
+	graduate := graduateProgramTitle.MatchString(title)
+	education := educationProgramTitle.MatchString(title)
+	if internship && graduate || internship && education || graduate && education {
+		return ""
+	}
+	if internship {
 		return "Internship"
 	}
-	if graduateProgramTitle.MatchString(title) {
+	if graduate {
 		return "Trainee / Graduate Program"
 	}
-	return ""
+	if education {
+		return "Education / Bootcamp"
+	}
+	return "Job"
 }
 
 func contains(values []string, value string) bool {

@@ -854,7 +854,7 @@ func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
 	for _, j := range xs {
 		if j.URL == link {
 			n++
-			if j.WorkMode != "remote" || j.Location != "Worldwide" || j.Description != "Build APIs in Go" {
+			if j.WorkMode != "remote" || j.Location != "Worldwide" || j.Description != "Build APIs in Go" || j.Type != "Job" {
 				t.Fatalf("job %+v", j)
 			}
 		}

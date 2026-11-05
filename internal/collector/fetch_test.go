@@ -4,8 +4,11 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
@@ -30,6 +33,102 @@ func TestFetchRejectsFailedAndEmptyPages(t *testing.T) {
 	}
 }
 
+func TestParseLeverPublicFeed(t *testing.T) {
+	f, err := os.Open("testdata/lever-jobs.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	body, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseLever(body, "https://jobs.lever.co/examplecompany", "examplecompany", "")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("jobs %+v, err %v", got, err)
+	}
+	first := got[0]
+	if first.Title != "Go Intern" || first.Company != "Example Company" || first.Location != "Казань" || first.Type != "Internship" || first.Level != "Intern" || first.Description != "Build backend services Learn Go" || first.URL != "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e" || first.ApplyURL != "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e/apply?lever-source=career-radar" {
+		t.Fatalf("first Lever listing %+v", first)
+	}
+	if got[1].Type != "Job" || got[1].Company != "Example Company" || got[1].Location != "Россия" || got[1].WorkMode != "remote" {
+		t.Fatalf("second Lever listing %+v", got[1])
+	}
+}
+
+func TestLeverLocationsMatchInitialGeographyFilters(t *testing.T) {
+	body, err := os.ReadFile("testdata/lever-jobs.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listings, err := parseLever(body, "https://jobs.lever.co/examplecompany", "examplecompany", "")
+	if err != nil || len(listings) != 2 {
+		t.Fatalf("Lever listings %+v, err %v", listings, err)
+	}
+	prefs := jobs.Preferences{Locations: []string{"Россия", "Казань", "Иннополис"}}
+	for _, listing := range listings {
+		if got := prefs.Match(jobs.Job{Location: listing.Location, WorkMode: listing.WorkMode}); got != jobs.Suitable {
+			t.Errorf("location %q mode %q matched as %s", listing.Location, listing.WorkMode, got)
+		}
+	}
+}
+
+func TestLeverWorkModeLeavesConflictingMarkersUnknown(t *testing.T) {
+	for _, value := range []string{"Remote / Office", "Удалённо — гибрид"} {
+		if got := leverWorkMode(value); got != "" {
+			t.Errorf("conflicting mode %q classified as %q", value, got)
+		}
+	}
+}
+
+func TestParseLeverFeedCanSelectOneObservedPosting(t *testing.T) {
+	body, err := os.ReadFile("testdata/lever-jobs.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseLever(body, "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e", "examplecompany", "4f816f9a-7f03-4e18-9710-6ec9a9c0d40e")
+	if err != nil || len(got) != 1 || got[0].Title != "Go Intern" {
+		t.Fatalf("selected Lever listing %+v, err %v", got, err)
+	}
+	missing, err := parseLever(body, "https://jobs.lever.co/examplecompany/00000000-0000-0000-0000-000000000000", "examplecompany", "00000000-0000-0000-0000-000000000000")
+	if err == nil || len(missing) != 0 {
+		t.Fatalf("missing listing treated as closed: %+v, err %v", missing, err)
+	}
+}
+
+func TestParseLeverRejectsAnUntrustedApplyURLAndRetainsThePosting(t *testing.T) {
+	body, err := os.ReadFile("testdata/lever-jobs.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsafe := strings.Replace(string(body), "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e/apply?lever-source=career-radar", "https://attacker.example/apply", 1)
+	got, err := parseLever([]byte(unsafe), "https://jobs.lever.co/examplecompany", "examplecompany", "")
+	if err == nil || len(got) != 2 || got[0].ApplyURL != "" || got[0].Title != "Go Intern" {
+		t.Fatalf("untrusted Lever apply link was accepted or posting was lost: %+v, err %v", got, err)
+	}
+}
+
+func TestLeverFetchUsesPublicXMLPostingsFeed(t *testing.T) {
+	feed, err := os.ReadFile("testdata/lever-jobs.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://api.lever.co/v0/postings/examplecompany?mode=xml" {
+			t.Fatalf("Lever feed URL %s", r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(feed))), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://jobs.lever.co/examplecompany")
+	if err != nil || len(got) != 2 || got[0].Company != "Example Company" || got[0].ApplyURL == "" {
+		t.Fatalf("Lever opportunities %+v, err %v", got, err)
+	}
+	got, err = Fetch(context.Background(), client, "https://jobs.lever.co/examplecompany/4f816f9a-7f03-4e18-9710-6ec9a9c0d40e")
+	if err != nil || len(got) != 1 || got[0].Title != "Go Intern" {
+		t.Fatalf("individual Lever opportunity %+v, err %v", got, err)
+	}
+}
+
 func TestFetchRetainsExplicitHTMLJobTitleWhenStructuredDataIsMissing(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		body := `<html><main><h1>Go Intern</h1><a href="/apply/123">Apply now</a></main></html>`
@@ -38,6 +137,17 @@ func TestFetchRetainsExplicitHTMLJobTitleWhenStructuredDataIsMissing(t *testing.
 	got, err := Fetch(context.Background(), client, "https://careers.example/careers/jobs/go-intern")
 	if err == nil || len(got) != 1 || got[0].Title != "Go Intern" || got[0].URL != "https://careers.example/careers/jobs/go-intern" || got[0].ApplyURL != "https://careers.example/apply/123" || got[0].Company != "" || got[0].Deadline != "" {
 		t.Fatalf("partial HTML job %+v error %v", got, err)
+	}
+}
+
+func TestFetchRetainsEducationalProgramAndApplyLink(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `<article itemscope itemtype="https://schema.org/EducationalOccupationalProgram"><h1 itemprop="name">Go Bootcamp</h1><span itemprop="provider" itemscope itemtype="https://schema.org/Organization"><span itemprop="name">Example Academy</span></span><a href="/apply">Apply now</a></article>`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://careers.example/programs/go")
+	if err != nil || len(got) != 1 || got[0].Type != "Education / Bootcamp" || got[0].Title != "Go Bootcamp" || got[0].Company != "Example Academy" || got[0].ApplyURL != "https://careers.example/apply" {
+		t.Fatalf("program %+v, err %v", got, err)
 	}
 }
 
