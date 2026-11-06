@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -157,5 +158,22 @@ func TestVacancyURLRejectsUnsafeOrNonIndividualLinks(t *testing.T) {
 	}
 	if got := VacancyURL("https://career.habr.com:443/vacancies/123/"); got != "https://career.habr.com/vacancies/123" {
 		t.Fatalf("canonical=%q", got)
+	}
+}
+
+func TestSearchDeduplicatesFeedBeforeResultLimit(t *testing.T) {
+	var cards atomic.Int32
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer"}</script>`
+		if r.URL.Path == "/vacancies/rss" {
+			body = `<rss><channel>` + strings.Repeat(`<item><title>Go Engineer</title><link>https://career.habr.com/vacancies/1000000001</link></item>`, 20) + `<item><title>Go Engineer</title><link>https://career.habr.com/vacancies/1000000002</link></item></channel></rss>`
+		} else {
+			cards.Add(1)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	got, err := Search(context.Background(), client, "Go")
+	if err != nil || len(got) != 2 || got[0].URL == got[1].URL || cards.Load() != 2 {
+		t.Fatalf("results=%+v cards=%d err=%v", got, cards.Load(), err)
 	}
 }

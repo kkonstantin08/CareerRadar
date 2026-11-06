@@ -93,13 +93,14 @@ func Search(ctx context.Context, client *http.Client, query string) ([]Result, e
 		return nil, errors.New("invalid Habr Career RSS feed")
 	}
 	results := []Result{}
+	seen := make(map[string]bool)
 	needle := strings.ToLower(strings.Join(strings.Fields(query), " "))
 	matches := func(value string) bool {
 		return strings.Contains(strings.ToLower(strings.Join(strings.Fields(value), " ")), needle)
 	}
 	for _, item := range feed.Channel.Items {
 		link := VacancyURL(item.URL)
-		if link == "" || strings.TrimSpace(item.Title) == "" {
+		if link == "" || seen[link] || strings.TrimSpace(item.Title) == "" {
 			continue
 		}
 		description := plainDescription(item.Description)
@@ -111,6 +112,7 @@ func Search(ctx context.Context, client *http.Client, query string) ([]Result, e
 		if strings.Contains(description, "Можно удалённо.") {
 			mode = "remote"
 		}
+		seen[link] = true
 		results = append(results, Result{Title: item.Title, Company: strings.TrimSpace(item.Company), URL: link, Source: SourceName, Description: description, WorkMode: mode})
 		if len(results) == 20 {
 			break
