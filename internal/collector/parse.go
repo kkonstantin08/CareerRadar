@@ -540,6 +540,12 @@ func schemaContains(value any, wanted string) bool {
 	return false
 }
 
+// TitleFacts classifies explicitly named offer types and levels; ambiguous labels remain unknown.
+func TitleFacts(title string) (offerType, level string) {
+	level, _ = titleLevel(title)
+	return titleType(title), level
+}
+
 func titleLevel(title string) (string, bool) {
 	level := ""
 	if mixedMiddle.MatchString(title) {

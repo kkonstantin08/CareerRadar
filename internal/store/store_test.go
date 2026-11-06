@@ -917,6 +917,37 @@ func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
 	}
 }
 
+func TestDiscoveredTitlesRetainExplicitTypeAndLevel(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	for i, tc := range []struct{ title, kind, level string }{
+		{"Go Intern", "Internship", "Intern"},
+		{"Junior Go Engineer", "Job", "Junior"},
+		{"Graduate Program", "Trainee / Graduate Program", ""},
+		{"Backend Bootcamp", "Education / Bootcamp", ""},
+		{"Junior / Senior Engineer", "Job", ""},
+	} {
+		link := fmt.Sprintf("https://remotive.com/remote-jobs/explicit-role-%d", i)
+		result := discovery.Result{Title: tc.title, URL: link, Source: "Remotive"}
+		for n := 0; n < 2; n++ {
+			if err := db.SaveDiscovered(ctx, []discovery.Result{result}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var kind, level string
+		if err := db.db.QueryRow(`SELECT offer_type,level FROM jobs WHERE url=$1`, link).Scan(&kind, &level); err != nil {
+			t.Fatal(err)
+		}
+		if kind != tc.kind || level != tc.level {
+			t.Errorf("%s: got %q/%q want %q/%q", tc.title, kind, level, tc.kind, tc.level)
+		}
+		var revisions int
+		if err := db.db.QueryRow(`SELECT count(*) FROM job_history h JOIN jobs j ON j.id=h.job_id WHERE j.url=$1`, link).Scan(&revisions); err != nil || revisions != 1 {
+			t.Fatalf("revisions=%d err=%v", revisions, err)
+		}
+	}
+}
+
 func TestOldNotificationAttemptCannotFinishNewAttempt(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

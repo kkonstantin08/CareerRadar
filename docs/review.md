@@ -171,3 +171,12 @@ After restart, the owner manually confirmed receiving `/help`, `/sources` and `/
 Explicit YEAR salaries in JSON-LD and Microdata now normalize to monthly equivalents, alongside existing MONTH salaries. Exact annual amounts divisible by twelve remain exact; fractional equivalents become outward-rounded bounds. One-sided ranges remain one-sided, invalid values remain unknown, and hourly or weekly rates are not converted without workload facts. Ashby reuses the same bounds calculation.
 
 GPT-6 Luna (High) independently reviewed arithmetic, accepted units, malformed values, overflow bounds, range matching and compatibility with Ashby. It found no implementation defect and requested that both READMEs describe schema.org annual support as well as Ashby; that wording is updated. The reviewer did not rerun tests. The implementer observed failing annual JSON-LD/Microdata tests before implementation, then passed focused tests, the full PostgreSQL-backed race suite, vet, build and `git diff --check`.
+
+
+## Global-search relevance and classification, 2026-11-06
+
+A real response for `Go internship` contained unrelated listings such as freelance writers and an office assistant. The earlier count-only smoke result of ten returned rows did not establish query relevance. Search now independently checks the provider's documented case-insensitive title/description substring condition, with whitespace normalization and script/style exclusion, before the result limit and before saving. Zero matching results is valid. The controlled regression initially failed on unrelated and script-only matches; it now passes. The optional network smoke now also verifies relevance, and a live `Python` query returned two relevant attributed results.
+
+A second defect hardcoded every saved discovered result to `Job` with an unknown level. Discovery now reuses the existing title classification rules for explicit Internship, Junior, Graduate and Education/Bootcamp labels; mixed levels remain unknown. PostgreSQL tests cover each label and repeated-save history idempotency.
+
+GPT-6 Luna (High) independently reviewed both fixes and found no remaining implementation defect. It confirmed that GET and POST share the relevance check, that filtering occurs before the 50-result cap, and that unchanged discoveries do not create history revisions. It did not edit or rerun tests. Search is deliberately bounded and uses literal substring matching; incidental substrings can match and separated query words are not semantic matches.

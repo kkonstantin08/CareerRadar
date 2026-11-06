@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"net/url"
 )
@@ -23,7 +24,8 @@ func (s *Store) SaveDiscovered(ctx context.Context, results []discovery.Result) 
 		return err
 	}
 	for _, r := range results {
-		_, err = s.Observe(ctx, Observation{SourceID: src.ID, PageURL: r.URL, URL: r.URL, Title: r.Title, Company: r.Company, Location: r.Location, Description: r.Description, WorkMode: "remote", Type: "Job"})
+		offerType, level := collector.TitleFacts(r.Title)
+		_, err = s.Observe(ctx, Observation{SourceID: src.ID, PageURL: r.URL, URL: r.URL, Title: r.Title, Company: r.Company, Location: r.Location, Description: r.Description, WorkMode: "remote", Type: offerType, Level: level})
 		if err != nil {
 			return err
 		}

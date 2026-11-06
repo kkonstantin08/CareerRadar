@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +37,12 @@ func TestPublicSearchSmoke(t *testing.T) {
 	}
 	if len(results) == 0 {
 		t.Fatal("no search results")
+	}
+	normalize := func(value string) string { return strings.ToLower(strings.Join(strings.Fields(value), " ")) }
+	for _, r := range results {
+		if !strings.Contains(normalize(r.Title), normalize(query)) && !strings.Contains(normalize(r.Description), normalize(query)) {
+			t.Fatalf("unrelated result for %q: %s", query, r.Title)
+		}
 	}
 	t.Logf("received %d attributed results", len(results))
 }

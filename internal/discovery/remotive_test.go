@@ -57,3 +57,25 @@ func TestDescriptionOmitsScriptsAndStyles(t *testing.T) {
 		t.Fatalf("description %q", got)
 	}
 }
+
+func TestSearchOmitsUnrelatedProviderPromotions(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		body := `{"jobs":[
+		{"title":"Freelance Writer","url":"https://remotive.com/remote-jobs/writing/one","description":"Write articles"},
+		{"title":"Python Engineer","url":"https://remotive.com/remote-jobs/software-dev/two","description":"Build APIs"},
+		{"title":"Backend Engineer","url":"https://remotive.com/remote-jobs/software-dev/three","description":"<p>Use <b>Python</b> daily</p>"},
+		{"title":"Writer","url":"https://remotive.com/remote-jobs/writing/four","description":"<script>Python</script><p>Write articles</p>"}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	got, err := Search(context.Background(), client, "Python")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("results=%+v err=%v", got, err)
+	}
+	if got[0].Title != "Python Engineer" || got[1].Title != "Backend Engineer" {
+		t.Fatalf("unrelated results=%+v", got)
+	}
+	got, err = Search(context.Background(), client, "unknown phrase")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("absent query results=%+v err=%v", got, err)
+	}
+}

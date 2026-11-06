@@ -93,6 +93,18 @@
           "apply_url": {"type":"string","description":"Source-provided application URL; empty when unknown"}
         }
       },
+      "DiscoveryResult": {
+        "type":"object",
+        "required":["title","company","url","location","source","description"],
+        "properties": {
+          "title":{"type":"string"},
+          "company":{"type":"string"},
+          "url":{"type":"string","format":"uri"},
+          "location":{"type":"string"},
+          "source":{"type":"string","enum":["Remotive"]},
+          "description":{"type":"string","description":"Plain text without scripts or styles"}
+        }
+      },
       "Preferences": {
         "type": "object",
         "additionalProperties": false,
@@ -442,6 +454,7 @@
     "/api/discovery": {
       "get": {
         "summary": "Search public Remotive listings",
+        "description": "Return up to 50 provider results whose title or plain description contains the query, ignoring case and repeated whitespace. An empty result is valid. This is a bounded provider search, not an exhaustive web search.",
         "parameters": [
           {
             "in": "query",
@@ -456,7 +469,8 @@
         ],
         "responses": {
           "200": {
-            "description": "Attributed results"
+            "description": "Attributed results",
+            "content":{"application/json":{"schema":{"type":"array","items":{"$ref":"#/components/schemas/DiscoveryResult"}}}}
           },
           "400": {
             "description": "Invalid query"
@@ -468,6 +482,7 @@
       },
       "post": {
         "summary": "Search Remotive and save results without enabling monitoring",
+        "description": "Apply the same title/description relevance check as GET. Save only matching results, preserving explicit title type and level labels; new sources stay disabled.",
         "requestBody": {
           "required": true,
           "content": {
@@ -490,13 +505,20 @@
         },
         "responses": {
           "200": {
-            "description": "Attributed search results saved"
+            "description": "Attributed search results saved",
+            "content":{"application/json":{"schema":{"type":"array","items":{"$ref":"#/components/schemas/DiscoveryResult"}}}}
           },
           "400": {
             "description": "Invalid query"
           },
           "502": {
             "description": "Search unavailable"
+          },
+          "415": {
+            "description": "Expected application/json"
+          },
+          "500": {
+            "description": "Could not save discovery results"
           }
         }
       }

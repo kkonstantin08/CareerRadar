@@ -56,12 +56,21 @@ func Search(ctx context.Context, client *http.Client, query string) ([]Result, e
 		return nil, err
 	}
 	results := []Result{}
+	needle := strings.ToLower(strings.Join(strings.Fields(query), " "))
+	matches := func(text string) bool {
+		return strings.Contains(strings.ToLower(strings.Join(strings.Fields(text), " ")), needle)
+	}
 	for _, j := range data.Jobs {
 		link, err := url.Parse(j.URL)
 		if err != nil || link.Scheme != "https" || link.Hostname() != "remotive.com" || link.User != nil || j.Title == "" {
 			continue
 		}
-		results = append(results, Result{Title: j.Title, Company: j.Company, URL: j.URL, Location: j.Location, Source: "Remotive", Description: plainDescription(j.Description)})
+		description := plainDescription(j.Description)
+		// Upstream responses can contain unrelated listings; verify the documented title/description match.
+		if !matches(j.Title) && !matches(description) {
+			continue
+		}
+		results = append(results, Result{Title: j.Title, Company: j.Company, URL: j.URL, Location: j.Location, Source: "Remotive", Description: description})
 		if len(results) == 50 {
 			break
 		}
