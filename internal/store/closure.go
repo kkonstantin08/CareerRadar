@@ -112,6 +112,16 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 	if err != nil {
 		return false, err
 	}
+	origin := "jobicy"
+	if collector.GreenhouseClosureEvidenceURL(jobURL) == evidence {
+		origin = "greenhouse"
+	} else if collector.LeverClosureEvidenceURL(jobURL) == evidence {
+		origin = "lever"
+	}
+	jobURL, err = storedAliasURL(ctx, s.db, jobURL, collector.PostingURL(jobURL))
+	if err != nil {
+		return false, err
+	}
 	var id int64
 	err = s.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -119,12 +129,6 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 	}
 	if err != nil {
 		return false, err
-	}
-	origin := "jobicy"
-	if collector.GreenhouseClosureEvidenceURL(jobURL) == evidence {
-		origin = "greenhouse"
-	} else if collector.LeverClosureEvidenceURL(jobURL) == evidence {
-		origin = "lever"
 	}
 	return true, s.confirmClosed(ctx, id, evidence, origin)
 }
@@ -212,6 +216,10 @@ func (s *Store) ReopenJobicy(ctx context.Context, jobURL, evidence string) error
 	if err != nil {
 		return err
 	}
+	jobURL, err = storedAliasURL(ctx, tx, jobURL, "")
+	if err != nil {
+		return err
+	}
 	var jobID int64
 	var title string
 	var closed bool
@@ -271,6 +279,10 @@ func (s *Store) reopenSourceClosure(ctx context.Context, jobURL, evidence, origi
 		return err
 	}
 	defer tx.Rollback()
+	jobURL, err = storedAliasURL(ctx, tx, jobURL, collector.PostingURL(jobURL))
+	if err != nil {
+		return err
+	}
 	var id int64
 	var title string
 	var closed bool

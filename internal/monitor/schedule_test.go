@@ -18,6 +18,53 @@ import (
 
 type monitorTransport func(*http.Request) (*http.Response, error)
 
+func TestConflictingPostingIdentityMarksSourceForAttention(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := fmt.Sprintf("https://identity-%d.example/jobs", time.Now().UnixNano())
+	src, err := db.AddSource(ctx, "Conflict", base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, src.ID)
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	defer admin.Exec(`DELETE FROM jobs WHERE source_id=$1`, src.ID)
+	posting := fmt.Sprintf("https://jobs.lever.co/example%d/12345678-1234-1234-1234-123456789abc", src.ID)
+	for _, raw := range []string{base + "/mirror", posting} {
+		if _, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: raw, Title: "Engineer"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := New(db, func(context.Context, string) ([]collector.Job, error) {
+		return []collector.Job{{URL: base + "/mirror", Title: "Engineer", Company: "Example", Deadline: "2027-01-01", ApplyURL: posting + "/apply"}}, nil
+	})
+	problem, err := svc.Check(ctx, src.ID)
+	if err != nil || !strings.Contains(problem, "conflicting vacancy identities") {
+		t.Fatalf("problem=%q err=%v", problem, err)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sources {
+		if s.ID == src.ID && s.Problem != problem {
+			t.Fatalf("saved problem=%q want %q", s.Problem, problem)
+		}
+	}
+}
+
 func (f monitorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestNextMoscowRun(t *testing.T) {

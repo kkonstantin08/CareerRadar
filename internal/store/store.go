@@ -94,7 +94,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (checksum BYTEA PRIMARY KEY)`); err != nil {
 		return err
 	}
-	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters} {
+	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters, migrations.JobAliases} {
 		sum := sha256.Sum256([]byte(migration))
 		var exists bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE checksum=$1)`, sum[:]).Scan(&exists); err != nil {
@@ -103,6 +103,11 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if !exists {
 			if _, err = tx.ExecContext(ctx, migration); err != nil {
 				return err
+			}
+			if migration == migrations.JobAliases {
+				if err = backfillJobAliases(ctx, tx); err != nil {
+					return err
+				}
 			}
 			if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(checksum) VALUES($1)`, sum[:]); err != nil {
 				return err
@@ -167,6 +172,14 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	}
 	u.RawQuery = query.Encode()
 	x.URL = u.String()
+	observedURL := x.URL
+	identity := collector.PostingURL(x.URL)
+	if target := collector.PostingURL(x.ApplyURL); target != "" {
+		if identity != "" && identity != target {
+			return false, ErrAmbiguousJobIdentity
+		}
+		identity = target
+	}
 	if canonical := collector.JobicyCanonicalURL(x.URL); canonical != "" {
 		x.URL = canonical
 	}
@@ -175,18 +188,18 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		return false, err
 	}
 	defer tx.Rollback()
+	// Identity selection spans aliases; serialize short write transactions to avoid alias lock-order cycles.
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':careerradar:observe-identities',0))`); err != nil {
+		return false, err
+	}
 	if id := collector.JobicyID(x.URL); id != "" {
-		// Serialize aliases of one listing before choosing an existing URL.
-		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "jobicy:"+id); err != nil {
-			return false, err
-		}
 		x.URL, err = jobicyStoredURL(ctx, tx, x.URL)
 		if err != nil {
 			return false, err
 		}
 	}
-	// The URL lock serializes first inserts and updates across concurrent checks.
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, x.URL); err != nil {
+	x.URL, err = storedAliasURL(ctx, tx, x.URL, identity)
+	if err != nil {
 		return false, err
 	}
 	var id int64
@@ -194,6 +207,11 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,monthly_salary_min,monthly_salary_max,salary_currency,direction,language,apply_url FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level, &old.Hours, &old.Salary, &old.SalaryMin, &old.SalaryMax, &old.Currency, &old.Direction, &old.Language, &old.ApplyURL)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
+	}
+	if id != 0 {
+		if identityErr := verifyStoredPostingIdentity(ctx, tx, id, identity); identityErr != nil {
+			return false, identityErr
+		}
 	}
 	// A changed title can invalidate a title-derived level; explicit internships remain known.
 	if x.Level == "" && (x.Title == "" || x.Title == old.Title || old.Level == "Intern" && old.Type == "Internship" && (x.Type == "" || x.Type == "Internship")) {
@@ -256,8 +274,24 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 			return false, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO job_evidence(job_url,page_url) VALUES($1,$2) ON CONFLICT(job_url,page_url) DO UPDATE SET last_seen=now()`, x.URL, x.PageURL); err != nil {
-		return false, err
+	for _, alias := range []string{observedURL, identity, x.URL} {
+		if alias == "" {
+			continue
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO job_aliases(alias_url,job_id) VALUES($1,$2) ON CONFLICT(alias_url) DO UPDATE SET job_id=EXCLUDED.job_id WHERE job_aliases.job_id=EXCLUDED.job_id`, alias, id)
+		if err != nil {
+			return false, err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return false, err
+		} else if n == 0 {
+			return false, ErrAmbiguousJobIdentity
+		}
+	}
+	for _, page := range []string{x.PageURL, observedURL} {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO job_evidence(job_url,page_url) VALUES($1,$2) ON CONFLICT(job_url,page_url) DO UPDATE SET last_seen=now()`, x.URL, page); err != nil {
+			return false, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return false, err

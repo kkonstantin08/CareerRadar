@@ -9,3 +9,5 @@ Parse schema.org JobPosting and EducationalOccupationalProgram records from JSON
 Lever boards use the vendor's public XML postings feed without authentication. A specific Lever URL is matched against the feed by posting ID; if it is missing, check the exact individual `jobs.lever.co` page. Only an unredirected `404` from that page is closure evidence; feed absence, redirects, access errors and other statuses leave prior observations open. Accept apply links only on the matching board and posting path.
 
 When a closed individual Greenhouse source or a Lever board feed later publishes the same posting again, reopen it only if the closure origin matches that source. Owner-confirmed closures are never reversed automatically.
+
+Persist verified posting aliases in an additive table. Resolve aliases within the observation transaction and serialize these short writes with a database advisory lock to avoid alias lock-order cycles; network fetching remains concurrent. Existing conflicting cards are preserved for attention rather than merged destructively. Source closure and reopening resolve the same aliases after validating provider evidence.
