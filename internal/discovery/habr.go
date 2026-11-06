@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"golang.org/x/net/html"
 )
 
@@ -23,13 +25,15 @@ const SourceURL = "https://career.habr.com/vacancies"
 
 // Result is an attributed vacancy with only explicitly published facts.
 type Result struct {
-	Title       string `json:"title"`
-	Company     string `json:"company"`
-	URL         string `json:"url"`
-	Location    string `json:"location"`
-	WorkMode    string `json:"work_mode"`
-	Source      string `json:"source"`
-	Description string `json:"description"`
+	Title       string         `json:"title"`
+	Company     string         `json:"company"`
+	URL         string         `json:"url"`
+	Location    string         `json:"location"`
+	WorkMode    string         `json:"work_mode"`
+	Source      string         `json:"source"`
+	Description string         `json:"description"`
+	Problem     string         `json:"problem,omitempty"`
+	Details     *collector.Job `json:"-"`
 }
 
 // VacancyURL validates and canonicalizes an individual Habr Career vacancy link.
@@ -55,6 +59,8 @@ func Search(ctx context.Context, client *http.Client, query string) ([]Result, e
 	if n := utf8.RuneCountInString(query); n < 2 || n > 100 {
 		return nil, errors.New("search query must contain 2 to 100 characters")
 	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, SourceURL+"/rss?q="+url.QueryEscape(query)+"&type=all", nil)
 	if err != nil {
 		return nil, err
@@ -105,10 +111,11 @@ func Search(ctx context.Context, client *http.Client, query string) ([]Result, e
 			mode = "remote"
 		}
 		results = append(results, Result{Title: item.Title, Company: strings.TrimSpace(item.Company), URL: link, Source: SourceName, Description: description, WorkMode: mode})
-		if len(results) == 50 {
+		if len(results) == 20 {
 			break
 		}
 	}
+	enrichCards(ctx, client, results)
 	return results, nil
 }
 

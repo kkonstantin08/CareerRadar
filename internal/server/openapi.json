@@ -101,9 +101,10 @@
           "company":{"type":"string"},
           "url":{"type":"string","format":"uri"},
           "location":{"type":"string","description":"Empty when not explicitly extracted"},
-          "work_mode":{"type":"string","enum":["","remote"],"description":"Remote only when explicitly declared in the RSS entry"},
+          "work_mode":{"type":"string","enum":["","remote"],"description":"Published RSS or card work mode"},
           "source":{"type":"string","enum":["Хабр Карьера"]},
-          "description":{"type":"string","description":"Plain text without scripts or styles"}
+          "description":{"type":"string","description":"Plain text without scripts or styles"},
+          "problem":{"type":"string","description":"Card retrieval or incomplete-data warning"}
         }
       },
       "Preferences": {
@@ -455,7 +456,7 @@
     "/api/discovery": {
       "get": {
         "summary": "Search public Habr Career RSS listings",
-        "description": "Return up to 50 provider results whose title or plain description contains the query, ignoring case and repeated whitespace. An empty result is valid. This is a bounded provider search, not an exhaustive web search.",
+        "description": "Return up to 20 provider results whose title or plain description contains the query, ignoring case and repeated whitespace. An empty result is valid. This is a bounded provider search, not an exhaustive web search.",
         "parameters": [
           {
             "in": "query",

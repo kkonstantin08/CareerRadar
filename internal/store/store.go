@@ -54,6 +54,9 @@ type Observation struct {
 	SalaryMin         *int64 `json:"salary_min"`
 	SalaryMax         *int64 `json:"salary_max"`
 	Currency          string `json:"currency"`
+	// RSS fallbacks may create records but must not replace cached card observations.
+	createOnly      bool
+	initialFallback *Observation
 }
 
 // Job includes a persisted observation and its application status.
@@ -211,6 +214,30 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	if id != 0 {
 		if identityErr := verifyStoredPostingIdentity(ctx, tx, id, identity); identityErr != nil {
 			return false, identityErr
+		}
+	}
+	if x.createOnly && err == nil {
+		old.SourceID, old.PageURL, old.URL = x.SourceID, x.PageURL, x.URL
+		x = old
+	}
+	if errors.Is(err, sql.ErrNoRows) && x.initialFallback != nil {
+		fallback := x.initialFallback
+		if x.Title == "" {
+			x.Title = fallback.Title
+			x.Level = fallback.Level
+			x.Type = fallback.Type
+		}
+		if x.Company == "" {
+			x.Company = fallback.Company
+		}
+		if x.Description == "" {
+			x.Description = fallback.Description
+		}
+		if x.Location == "" && !x.LocationUncertain {
+			x.Location = fallback.Location
+		}
+		if x.WorkMode == "" {
+			x.WorkMode = fallback.WorkMode
 		}
 	}
 	// A changed title can invalidate a title-derived level; explicit internships remain known.

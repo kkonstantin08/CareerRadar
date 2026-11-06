@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,9 @@ func TestDiscoveryQueryLimitsCountCharacters(t *testing.T) {
 
 func TestHabrSearchRetainsOnlyRelevantAttributedVacancies(t *testing.T) {
 	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/vacancies/rss" {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`<script type="application/ld+json">{"@type":"JobPosting","title":"Go Developer"}</script>`)), Header: make(http.Header)}, nil
+		}
 		if r.URL.Host != "career.habr.com" || r.URL.Path != "/vacancies/rss" || r.URL.Query().Get("q") != "Go" {
 			t.Errorf("unexpected search endpoint %s", r.URL)
 		}
@@ -61,6 +65,34 @@ func TestHabrSearchRetainsOnlyRelevantAttributedVacancies(t *testing.T) {
 	}
 	if got[1].WorkMode != "" {
 		t.Fatalf("invented remote mode: %+v", got[1])
+	}
+}
+
+func TestSearchEnrichesMatchingCardsAndRetainsUnavailableRSS(t *testing.T) {
+	body, err := os.ReadFile("../collector/testdata/habr-job.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []int{200, 403} {
+		client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+			response, code := string(body), status
+			if r.URL.Path == "/vacancies/rss" {
+				response = `<rss><channel><item><title>Junior Go Developer</title><author>RSS Company</author><link>https://career.habr.com/vacancies/1000000001</link><description>Go. Можно удалённо.</description></item></channel></rss>`
+				code = 200
+			}
+			return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(response)), Header: make(http.Header)}, nil
+		})}
+		got, err := Search(context.Background(), client, "Go")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("status=%d results=%+v err=%v", status, got, err)
+		}
+		if status == 200 {
+			if got[0].Details == nil || got[0].Details.Currency != "RUB" || got[0].Details.SalaryMin == nil || *got[0].Details.SalaryMin != 75000 || got[0].Location != "Казань" || got[0].Problem != "" {
+				t.Fatalf("missing details: %+v", got[0])
+			}
+		} else if got[0].Details != nil || got[0].Problem == "" || got[0].Company != "RSS Company" || got[0].WorkMode != "remote" {
+			t.Fatalf("RSS facts lost on error: %+v", got[0])
+		}
 	}
 }
 

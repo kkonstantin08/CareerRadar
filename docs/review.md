@@ -207,3 +207,8 @@ The first real-card smoke hit the page limit because the collector followed rela
 A separate public smoke on vacancy `1000168365` then parsed one observation: Junior, Kazan, remote, RUB 75000–125000, with the published deadline. This was a read-only collection check and did not activate a monitoring source or send a job notification. Local fixture tests and a PostgreSQL monitor test cover city/pay normalization, wrong-host protection, unknown hours, location alternatives, source attention, and retaining an open job through ambiguous updates.
 
 GPT-6 Luna (High) independently reviewed the diff. It found that the initial stop rule handled only exactly one extracted record; the implementation and regressions now handle every recognized detail page and filter unrelated structured records too. The final follow-up found no remaining concrete defect in this change. The reviewer inspected code, tests and documentation; it did not run Go tests.
+
+
+## Habr discovery card enrichment
+
+Search enriches up to 20 RSS matches using two workers and a 20-second budget. Failed cards keep RSS facts and produce a deduplicated source warning. Existing confirmed fields survive incomplete checks; new records use published RSS fields as fallback. A GPT-6 Luna (High) independent review found two possible data-loss cases for existing and new partial cards. Both were fixed and covered by PostgreSQL regression tests; its final read-only review found no further concrete defect. The reviewer did not run tests. The implementer ran the PostgreSQL-backed race suite, vet, build and a public Go search smoke (20 results). Empty searches do not establish recovery of previously failed individual cards.

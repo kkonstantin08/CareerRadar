@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"net/url"
@@ -961,6 +962,72 @@ func TestDiscoveryRejectsRemovedProvider(t *testing.T) {
 	sources, err := db.Sources(ctx)
 	if err != nil || len(sources) != 0 {
 		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestDiscoveredDetailsSurviveUnavailableCardWithoutRepeatedWarnings(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	link := "https://career.habr.com/vacancies/1000000001"
+	minimum, maximum := int64(75000), int64(125000)
+	r := discovery.Result{Title: "RSS Go title", Company: "RSS company", URL: link, Source: discovery.SourceName, Description: "Short RSS summary", Details: &collector.Job{URL: link, SourceURL: link, Title: "Junior Go Developer", Company: "Verified company", Description: "Full confirmed requirements", Location: "Казань", WorkMode: "remote", Deadline: "2026-12-01", Type: "Job", Level: "Junior", SalaryMin: &minimum, SalaryMax: &maximum, Currency: "RUB"}}
+	for range 2 {
+		if err := db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := db.Jobs(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("jobs=%+v err=%v", all, err)
+	}
+	id := all[0].ID
+	if all[0].Title != "Junior Go Developer" || all[0].SalaryMin == nil || *all[0].SalaryMin != minimum || all[0].Location != "Казань" {
+		t.Fatalf("details not stored: %+v", all[0])
+	}
+	if err = db.SetStatus(ctx, id, "Откликнулся"); err != nil {
+		t.Fatal(err)
+	}
+	partial := *r.Details
+	partial.Description = ""
+	partial.Company = ""
+	partial.Location = ""
+	partial.WorkMode = ""
+	r.Details = &partial
+	if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	r.Details = nil
+	r.Problem = "Card unavailable"
+	for range 2 {
+		if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := db.Details(ctx, id)
+	if err != nil || d.Job.Title != "Junior Go Developer" || d.Job.Description != "Full confirmed requirements" || d.Job.Company != "Verified company" || d.Job.Status != "Откликнулся" || len(d.History) != 1 {
+		t.Fatalf("full observation overwritten: %+v err=%v", d, err)
+	}
+	var warnings int
+	if err = db.db.QueryRow(`SELECT count(*) FROM notifications WHERE event_key LIKE 'check:%'`).Scan(&warnings); err != nil || warnings != 1 {
+		t.Fatalf("warnings=%d err=%v", warnings, err)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil || len(sources) != 1 || sources[0].Enabled || sources[0].Problem == "" {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestNewPartialCardUsesPublishedRSSFields(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	link := "https://career.habr.com/vacancies/1000000001"
+	r := discovery.Result{Title: "Junior Go Developer", Company: "RSS Company", Description: "RSS requirements", URL: link, Source: discovery.SourceName, WorkMode: "remote", Details: &collector.Job{URL: link, SourceURL: link}}
+	if err := db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := db.Jobs(ctx)
+	if err != nil || len(all) != 1 || all[0].Title != r.Title || all[0].Company != r.Company || all[0].Description != r.Description || all[0].Level != "Junior" || all[0].WorkMode != "remote" {
+		t.Fatalf("jobs=%+v err=%v", all, err)
 	}
 }
 
