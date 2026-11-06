@@ -209,6 +209,7 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			continue
 		}
 		for _, j := range extracted {
+			jobPage := pageURL
 			if j.URL == "" {
 				if len(extracted) > 1 {
 					problem = errors.New("multiple vacancies have no distinct URL; source requires attention")
@@ -227,6 +228,10 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 					continue
 				}
 				j.URL = resolved.String()
+				jobPage = resolved
+			}
+			if habrVacancyURL(pageURL) && (!habrVacancyURL(jobPage) || strings.Trim(jobPage.Path, "/") != strings.Trim(pageURL.Path, "/")) {
+				continue
 			}
 			if len(extracted) == 1 && j.URL == actual {
 				apply, err := applicationLink(body, pageURL)
@@ -238,7 +243,8 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			}
 			found = append(found, j)
 		}
-		if current.depth >= 2 || id != "" {
+		// An individual Habr card's related links are different jobs, not additional details of this one.
+		if current.depth >= 2 || id != "" || habrVacancyURL(pageURL) {
 			continue
 		}
 		base, err := url.Parse(actual)
@@ -346,6 +352,18 @@ func parseHTMLJob(body []byte, source string) (Job, bool, error) {
 	job.Level, _ = titleLevel(title)
 	job.Type = titleType(title)
 	return job, true, nil
+}
+
+func habrVacancyURL(u *url.URL) bool {
+	if u == nil || u.Scheme != "https" || u.Hostname() != "career.habr.com" || u.User != nil || u.RawPath != "" || (u.Port() != "" && u.Port() != "443") {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] != "vacancies" {
+		return false
+	}
+	id, err := strconv.ParseUint(parts[1], 10, 53)
+	return err == nil && id > 0 && strconv.FormatUint(id, 10) == parts[1]
 }
 
 func individualJobURL(u *url.URL) bool {

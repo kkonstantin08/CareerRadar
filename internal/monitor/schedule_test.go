@@ -348,11 +348,11 @@ func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	src, err := db.AddSource(ctx, "Salary", "https://example.org/job", true)
+	src, err := db.AddSource(ctx, "Salary", "https://career.habr.com/vacancies/1000000001", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"validThrough":"2027-01-01","baseSalary":{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"MONTH"}}}</script>`
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Junior Go Developer","hiringOrganization":{"name":"Example"},"validThrough":"2027-01-01","jobLocationType":"TELECOMMUTE","jobLocation":[{"address":"Казань"}],"baseSalary":{"currency":"RUR","value":{"minValue":80000,"maxValue":120000,"unitText":"MONTH"}}}</script>`
 	svc := New(db, func(_ context.Context, raw string) ([]collector.Job, error) {
 		found, err := collector.Parse(strings.NewReader(body), raw)
 		if err == nil && len(found) == 1 {
@@ -366,6 +366,17 @@ func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
 	got, err := db.Jobs(ctx)
 	if err != nil || len(got) != 1 || got[0].SalaryMin == nil || got[0].SalaryMax == nil || *got[0].SalaryMin != 80000 || *got[0].SalaryMax != 120000 || got[0].ApplyURL != "https://example.org/apply" {
 		t.Fatalf("jobs %+v %v", got, err)
+	}
+	if got[0].Currency != "RUB" || got[0].Location != "Казань" || got[0].WorkMode != "remote" || got[0].Level != "Junior" {
+		t.Fatalf("Habr facts=%+v", got[0])
+	}
+	body = strings.Replace(body, `"jobLocation":[{"address":"Казань"}]`, `"jobLocation":[{"address":"Казань"},{"address":"Москва"}]`, 1)
+	if problem, err := svc.Check(ctx, src.ID); err != nil || problem == "" {
+		t.Fatalf("ambiguous location problem=%q err=%v", problem, err)
+	}
+	got, err = db.Jobs(ctx)
+	if err != nil || len(got) != 1 || got[0].Location != "" || got[0].Closed {
+		t.Fatalf("uncertain job=%+v err=%v", got, err)
 	}
 }
 

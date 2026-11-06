@@ -15,6 +15,65 @@ type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestHabrIndividualCardDoesNotCollectRelatedVacancies(t *testing.T) {
+	body, err := os.ReadFile("testdata/habr-job.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := strings.Replace(string(body), "</body>", `<a href="/vacancies/1000000002">Похожая вакансия Go Developer</a></body>`, 1)
+	calls := 0
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(page)), Header: make(http.Header)}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://career.habr.com/vacancies/1000000001")
+	if err != nil || len(got) != 1 || calls != 1 {
+		t.Fatalf("jobs=%d requests=%d err=%v", len(got), calls, err)
+	}
+}
+
+func TestHabrBoardStillDiscoversIndividualCards(t *testing.T) {
+	body, err := os.ReadFile("testdata/habr-job.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		page := string(body)
+		if r.URL.Path == "/vacancies" {
+			page = `<a href="/vacancies/1000000001">Go Developer vacancy</a>`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(page)), Header: make(http.Header)}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://career.habr.com/vacancies")
+	if err != nil || len(got) != 1 || calls != 2 {
+		t.Fatalf("jobs=%d requests=%d err=%v", len(got), calls, err)
+	}
+}
+
+func TestHabrIndividualCardNeverFallsThroughToRelatedJobs(t *testing.T) {
+	for _, tc := range []struct {
+		body    string
+		count   int
+		problem bool
+	}{
+		{`<a href="/vacancies/1000000002">Go vacancy</a>`, 0, true},
+		{`<script type="application/ld+json">[{"@type":"JobPosting","title":"Target","url":"/vacancies/1000000001"},{"@type":"JobPosting","title":"Related","url":"/vacancies/1000000002"}]</script><a href="/vacancies/1000000002">Go vacancy</a>`, 1, false},
+		{`<script type="application/ld+json">[{"@type":"JobPosting","title":"One"},{"@type":"JobPosting","title":"Two"}]</script><a href="/vacancies/1000000002">Go vacancy</a>`, 0, true},
+	} {
+		calls := 0
+		client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
+		})}
+		got, err := Fetch(context.Background(), client, "https://career.habr.com/vacancies/1000000001")
+		if calls != 1 || len(got) != tc.count || (err != nil) != tc.problem {
+			t.Errorf("requests=%d jobs=%+v err=%v", calls, got, err)
+		}
+	}
+}
+
 func TestFetchRejectsFailedAndEmptyPages(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

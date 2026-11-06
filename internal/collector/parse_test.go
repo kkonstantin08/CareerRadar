@@ -25,6 +25,51 @@ func TestParseJobPosting(t *testing.T) {
 	}
 }
 
+func TestHabrStructuredCityAndRubleSalary(t *testing.T) {
+	body, err := os.ReadFile("testdata/habr-job.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(strings.NewReader(string(body)), "https://career.habr.com/vacancies/1000000001")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+	j := got[0]
+	if j.Description != "Develop Go services. SQL knowledge required." {
+		t.Fatalf("unreadable description: %q", j.Description)
+	}
+	if j.Location != "Казань" || j.Currency != "RUB" || j.SalaryMin == nil || *j.SalaryMin != 75000 || j.SalaryMax == nil || *j.SalaryMax != 125000 || j.Level != "Junior" || j.WorkMode != "remote" || j.Deadline != "2026-12-01" || j.Hours != nil {
+		t.Fatalf("Habr facts=%+v", j)
+	}
+	for _, source := range []string{"https://example.org/jobs/1", "https://career.habr.com.evil.test/vacancies/1"} {
+		got, err = Parse(strings.NewReader(string(body)), source)
+		if err != nil || len(got) != 1 || got[0].Location != "" || got[0].Currency != "RUR" {
+			t.Fatalf("Habr mapping leaked to %s: %+v err=%v", source, got, err)
+		}
+	}
+}
+
+func TestHabrMultipleLocationsRemainUncertain(t *testing.T) {
+	for _, tc := range []struct {
+		places, country, location string
+		uncertain                 bool
+	}{
+		{`[{"address":"Казань"},{"address":"Москва"}]`, "", "", true},
+		{`[{"address":"Казань"},{"address":""}]`, "", "", true},
+		{`[{"address":"Казань"},{"address":"Казань"}]`, "", "Казань", false},
+		{`[{"address":"Казань"},{"address":"Москва"}]`, `,"applicantLocationRequirements":{"@type":"Country","name":"Россия"}`, "Россия", false},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","jobLocationType":"TELECOMMUTE","jobLocation":` + tc.places + tc.country + `}</script>`
+		got, err := Parse(strings.NewReader(body), "https://career.habr.com/vacancies/1000000001")
+		if err != nil || len(got) != 1 || got[0].Location != tc.location || got[0].LocationUncertain != tc.uncertain {
+			t.Fatalf("locations=%+v err=%v", got, err)
+		}
+		if (tc.uncertain || strings.Contains(tc.places, "Москва")) && (!strings.Contains(got[0].Description, "Казань") || strings.Contains(tc.places, "Москва") && !strings.Contains(got[0].Description, "Москва")) {
+			t.Fatalf("published location facts lost: %+v", got[0])
+		}
+	}
+}
+
 func TestParseJobPostingMicrodataFixture(t *testing.T) {
 	f, err := os.Open("testdata/microdata-job.html")
 	if err != nil {

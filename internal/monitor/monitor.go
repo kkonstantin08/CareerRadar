@@ -191,7 +191,7 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 			}
 			continue
 		}
-		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "") {
+		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "" || job.LocationUncertain) {
 			problem = "Vacancy details require clarification"
 		}
 		if evidence := collector.GreenhouseClosureEvidenceURL(src.URL); evidence != "" && evidence == collector.GreenhouseClosureEvidenceURL(job.URL) {

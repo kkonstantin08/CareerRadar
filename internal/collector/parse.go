@@ -56,6 +56,8 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	source, sourceErr := url.Parse(sourceURL)
+	habrSource := sourceErr == nil && habrVacancyURL(source)
 	var result []Job
 	var extract func(any)
 	extract = func(value any) {
@@ -84,19 +86,29 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			location, mode := "", ""
 			var locations []string
-			for _, place := range schemaObjects(v["jobLocation"]) {
+			places := schemaObjects(v["jobLocation"])
+			unknownLocation := false
+			for _, place := range places {
+				value := ""
 				if addr, ok := place["address"].(map[string]any); ok {
-					value := schemaText(addr["addressLocality"])
+					value = schemaText(addr["addressLocality"])
 					if strings.TrimSpace(value) == "" {
 						value = schemaText(addr["addressCountry"])
 					}
-					if value = strings.TrimSpace(value); value != "" && !contains(locations, value) {
-						locations = append(locations, value)
-					}
+				} else if habrSource {
+					// Habr's job template publishes city labels as Text, rather than street addresses.
+					value, _ = place["address"].(string)
+				}
+				value = strings.TrimSpace(value)
+				if value == "" {
+					unknownLocation = true
+				} else if !contains(locations, value) {
+					locations = append(locations, value)
 				}
 			}
+			locationUncertain := len(places) > 1 && (unknownLocation || len(locations) > 1)
 			// Selecting one of several published locations would silently narrow the listing's eligibility.
-			if len(locations) == 1 {
+			if len(locations) == 1 && !locationUncertain {
 				location = locations[0]
 			}
 			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {
@@ -106,12 +118,24 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 					area := areas[0]
 					if country := schemaText(area["name"]); country != "" {
 						location = country
+						locationUncertain = false
 					}
 				}
 			}
 			title := str("title")
 			deadline := str("validThrough")
 			description := str("description")
+			if habrSource {
+				description = plainHTML(description)
+			}
+			// Keep known alternatives in history even when one location field cannot represent them safely.
+			if len(places) > 1 && len(locations) > 0 && (locationUncertain || len(locations) > 1) {
+				sort.Strings(locations)
+				label := "Опубликованные локации: " + strings.Join(locations, "; ")
+				if !strings.Contains(description, label) {
+					description = strings.TrimSpace(description + "\n\n" + label)
+				}
+			}
 			if program {
 				title = str("name")
 				deadline = str("applicationDeadline")
@@ -158,6 +182,10 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if base, ok := v["baseSalary"].(map[string]any); ok {
 				c, _ := base["currency"].(string)
 				c = strings.TrimSpace(c)
+				// Habr labels its current ruble salaries RUR; the application's salary filters use RUB.
+				if habrSource && strings.EqualFold(c, "RUR") {
+					c = "RUB"
+				}
 				if value, ok := base["value"].(map[string]any); ok {
 					unit, _ := value["unitText"].(string)
 					months := int64(0)
@@ -209,7 +237,7 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			sort.Strings(languages)
 			language := strings.Join(languages, ", ")
-			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, WorkMode: mode, Title: title, Company: company, Description: description, Deadline: deadline, URL: str("url"), SourceURL: sourceURL})
+			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, LocationUncertain: locationUncertain, WorkMode: mode, Title: title, Company: company, Description: description, Deadline: deadline, URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)

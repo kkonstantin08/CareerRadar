@@ -11,3 +11,5 @@ Cross-source identity: retain persistent aliases only for verified individual Gr
 Pay normalization: accept explicit MONTH and YEAR salary units from schema.org JSON-LD and Microdata. Convert annual pay to monthly equivalents with outward rounding to whole currency units; retain fractional equivalents as ranges. Do not infer monthly pay from hourly or weekly amounts without a published workload.
 
 Global discovery uses public Habr Career RSS search independently of monitored sites. Remotive is removed at the owner's request. Retain attributed links, RSS author and description, literal query relevance, and explicit remote markers; do not infer missing geography or workload. Reject invalid feed documents and non-vacancy URLs. New companies still require confirmation before monitoring.
+
+Individual Habr vacancy cards use JobPosting JSON-LD. Normalize that provider's city Text labels and modern ruble RUR label; do not apply these source-specific assumptions to arbitrary sites. Preserve known alternative locations in revision descriptions, flag ambiguous locations for attention, and stop related-vacancy traversal on an individual Habr card.
