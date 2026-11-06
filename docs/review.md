@@ -244,3 +244,7 @@ GPT-6 Luna (High) reviewed this work and identified stale filling of an uncertai
 ## Explicitly linked hosted career boards, 2026-11-07
 
 Company discovery now proposes explicitly linked Greenhouse, Lever and Ashby board URLs from the company homepage, including links without career-related anchor text. Only exact supported HTTPS hosts and a single valid board slug qualify; default HTTPS ports and tracking components are normalized away. Proposals still require owner confirmation before monitoring. GPT-6 Luna (High) reviewed the initial change, found that valid board links with tracking or the default port were overlooked, and the implementer added a regression and normalization. The reviewer did not run tests. The implementer ran the PostgreSQL-backed race suite, vet and build; no public company homepage was checked for this change.
+
+## Public discovery smoke and local restart, 2026-11-07
+
+A read-only public company search for `Cloudflare` returned a career link for the candidate `Cloudflare Workers`; this demonstrates connectivity but not unambiguous identification of the intended company, nor specifically the hosted-board branch above. A separate read-only Habr search for `Go` returned 20 attributed results. Neither smoke saved vacancies or activated sources. The service was rebuilt from `e08d7d5` and restarted locally: authenticated cabinet, jobs, sources and OpenAPI returned HTTP 200, the Telegram link remained present, and zero sources were enabled.
