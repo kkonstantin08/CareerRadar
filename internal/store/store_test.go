@@ -443,12 +443,18 @@ func TestPreferencesRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	want := jobs.Preferences{Levels: []string{"Junior", "Intern"}, Languages: []string{"Go"}}
+	previous, err := db.Preferences(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.SavePreferences(context.Background(), previous) }()
+	minimum, maximum := int64(50000), int64(150000)
+	want := jobs.Preferences{Levels: []string{"Junior", "Intern"}, Languages: []string{"Go"}, MinSalary: &minimum, MaxSalary: &maximum, Currency: "RUB"}
 	if err = db.SavePreferences(ctx, want); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.Preferences(ctx)
-	if err != nil || len(got.Levels) != 2 || len(got.Languages) != 1 || got.Languages[0] != "Go" {
+	if err != nil || len(got.Levels) != 2 || len(got.Languages) != 1 || got.Languages[0] != "Go" || got.MaxSalary == nil || *got.MaxSalary != maximum {
 		t.Fatalf("preferences %+v %v", got, err)
 	}
 }

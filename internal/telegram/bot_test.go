@@ -184,6 +184,22 @@ func TestTelegramHidesSalaryRangeMismatch(t *testing.T) {
 	}
 }
 
+type cappedSalaryData struct{ salaryData }
+
+func (f *cappedSalaryData) Preferences(context.Context) (jobs.Preferences, error) {
+	max := int64(40000)
+	return jobs.Preferences{MaxSalary: &max, Currency: "RUB"}, nil
+}
+
+func TestTelegramHidesSalaryAboveConfiguredMaximum(t *testing.T) {
+	f := &cappedSalaryData{}
+	f.linked = 5
+	got := New(f).Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"})
+	if strings.Contains(got, "Low salary") {
+		t.Fatalf("salary above configured maximum visible: %s", got)
+	}
+}
+
 func (f *fakeData) Preferences(context.Context) (jobs.Preferences, error) {
 	return jobs.Preferences{}, nil
 }

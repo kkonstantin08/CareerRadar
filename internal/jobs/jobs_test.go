@@ -133,6 +133,34 @@ func TestSalaryRangeMatchesWithoutGuessing(t *testing.T) {
 	}
 }
 
+func TestMaximumSalaryPreferenceUsesPublishedBoundsOnly(t *testing.T) {
+	maximum := int64(100000)
+	p := Preferences{MaxSalary: &maximum, Currency: "RUB"}
+	for _, tc := range []struct {
+		name string
+		job  Job
+		want Match
+	}{
+		{"exact within limit", Job{Salary: ptrSalary(90000), Currency: "RUB"}, Suitable},
+		{"exact above limit", Job{Salary: ptrSalary(110000), Currency: "RUB"}, Unsuitable},
+		{"range within limit", Job{SalaryMin: ptrSalary(70000), SalaryMax: ptrSalary(100000), Currency: "RUB"}, Suitable},
+		{"range crossing limit", Job{SalaryMin: ptrSalary(90000), SalaryMax: ptrSalary(110000), Currency: "RUB"}, NeedsClarification},
+		{"range above limit", Job{SalaryMin: ptrSalary(110000), SalaryMax: ptrSalary(130000), Currency: "RUB"}, Unsuitable},
+		{"minimum above limit", Job{SalaryMin: ptrSalary(110000), Currency: "RUB"}, Unsuitable},
+		{"minimum below limit", Job{SalaryMin: ptrSalary(90000), Currency: "RUB"}, NeedsClarification},
+		{"maximum within limit", Job{SalaryMax: ptrSalary(90000), Currency: "RUB"}, Suitable},
+		{"maximum crosses limit", Job{SalaryMax: ptrSalary(110000), Currency: "RUB"}, NeedsClarification},
+		{"currency mismatch", Job{Salary: ptrSalary(90000), Currency: "USD"}, NeedsClarification},
+		{"unknown salary", Job{}, NeedsClarification},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := p.Match(tc.job); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func ptrSalary(n int64) *int64 { return &n }
 
 func TestMatchMultiplePublishedLanguages(t *testing.T) {

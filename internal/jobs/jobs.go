@@ -30,6 +30,7 @@ type Preferences struct {
 	WorkModes  []string `json:"work_modes"`
 	MaxHours   *int     `json:"max_hours"`
 	MinSalary  *int64   `json:"min_salary"`
+	MaxSalary  *int64   `json:"max_salary"`
 	Currency   string   `json:"currency"`
 }
 
@@ -117,17 +118,20 @@ func (p Preferences) Match(j Job) Match {
 			return Unsuitable
 		}
 	}
-	if p.MinSalary != nil {
+	if p.MinSalary != nil || p.MaxSalary != nil {
 		if j.Currency == "" || p.Currency == "" || !strings.EqualFold(j.Currency, p.Currency) {
 			unknown = true
-		} else if j.Salary != nil && *j.Salary < *p.MinSalary {
-			return Unsuitable
-		} else if j.Salary == nil {
-			if j.SalaryMin != nil && j.SalaryMax != nil && *j.SalaryMin > *j.SalaryMax {
-				unknown = true
-			} else if j.SalaryMax != nil && *j.SalaryMax < *p.MinSalary {
+		} else if j.Salary != nil {
+			if (p.MinSalary != nil && *j.Salary < *p.MinSalary) || (p.MaxSalary != nil && *j.Salary > *p.MaxSalary) {
 				return Unsuitable
-			} else if j.SalaryMin == nil || *j.SalaryMin < *p.MinSalary {
+			}
+		} else if j.SalaryMin != nil && j.SalaryMax != nil && *j.SalaryMin > *j.SalaryMax {
+			unknown = true
+		} else {
+			if (p.MinSalary != nil && j.SalaryMax != nil && *j.SalaryMax < *p.MinSalary) || (p.MaxSalary != nil && j.SalaryMin != nil && *j.SalaryMin > *p.MaxSalary) {
+				return Unsuitable
+			}
+			if (p.MinSalary != nil && (j.SalaryMin == nil || *j.SalaryMin < *p.MinSalary)) || (p.MaxSalary != nil && (j.SalaryMax == nil || *j.SalaryMax > *p.MaxSalary)) {
 				unknown = true
 			}
 		}

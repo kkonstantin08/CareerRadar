@@ -174,7 +174,12 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 		var p jobs.Preferences
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 		dec.DisallowUnknownFields()
-		if dec.Decode(&p) != nil || (p.MaxHours != nil && (*p.MaxHours < 0 || *p.MaxHours > 168)) || (p.MinSalary != nil && (*p.MinSalary < 0 || p.Currency == "")) {
+		decodeErr := dec.Decode(&p)
+		p.Currency = strings.TrimSpace(p.Currency)
+		if decodeErr != nil || (p.MaxHours != nil && (*p.MaxHours < 0 || *p.MaxHours > 168)) ||
+			(p.MinSalary != nil && *p.MinSalary < 0) || (p.MaxSalary != nil && *p.MaxSalary < 0) ||
+			((p.MinSalary != nil || p.MaxSalary != nil) && strings.TrimSpace(p.Currency) == "") ||
+			(p.MinSalary != nil && p.MaxSalary != nil && *p.MinSalary > *p.MaxSalary) {
 			http.Error(w, "invalid preferences", 400)
 			return
 		}

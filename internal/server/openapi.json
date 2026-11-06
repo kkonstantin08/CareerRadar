@@ -92,6 +92,23 @@
           },
           "apply_url": {"type":"string","description":"Source-provided application URL; empty when unknown"}
         }
+      },
+      "Preferences": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "levels": {"type":"array","items":{"type":"string"}},
+          "directions": {"type":"array","items":{"type":"string"}},
+          "locations": {"type":"array","items":{"type":"string"}},
+          "types": {"type":"array","items":{"type":"string"}},
+          "languages": {"type":"array","items":{"type":"string"}},
+          "companies": {"type":"array","items":{"type":"string"}},
+          "work_modes": {"type":"array","items":{"type":"string"}},
+          "max_hours": {"type":"integer","minimum":0,"maximum":168,"nullable":true},
+          "min_salary": {"type":"integer","format":"int64","minimum":0,"nullable":true,"description":"Optional minimum monthly salary"},
+          "max_salary": {"type":"integer","format":"int64","minimum":0,"nullable":true,"description":"Optional maximum monthly salary"},
+          "currency": {"type":"string","description":"Required when either salary limit is set"}
+        }
       }
     }
   },
@@ -499,7 +516,8 @@
         "summary": "Get preferences",
         "responses": {
           "200": {
-            "description": "Current preferences"
+            "description": "Current preferences",
+            "content": {"application/json":{"schema":{"$ref":"#/components/schemas/Preferences"}}}
           }
         }
       },
@@ -510,14 +528,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Preferences"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Saved preferences"
+            "description": "Saved preferences",
+            "content": {"application/json":{"schema":{"$ref":"#/components/schemas/Preferences"}}}
           },
           "400": {
             "description": "Invalid preferences"

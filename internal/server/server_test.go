@@ -148,7 +148,7 @@ func TestJobsEndpointPaginatesAfterPreferenceFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.SavePreferences(context.Background(), previous) })
+	defer func() { _ = db.SavePreferences(context.Background(), previous) }()
 	maxHours := 10
 	company := fmt.Sprintf("Pagination preference %d", time.Now().UnixNano())
 	if err = db.SavePreferences(ctx, jobs.Preferences{MaxHours: &maxHours}); err != nil {
@@ -477,7 +477,12 @@ func TestPreferencesAPI(t *testing.T) {
 	}
 	defer db.Close()
 	h := New(db, "owner", "secret")
-	req := httptest.NewRequest(http.MethodPut, "/api/preferences", strings.NewReader(`{"levels":["Intern","Junior"],"languages":["Go"],"max_hours":30}`))
+	previous, err := db.Preferences(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.SavePreferences(context.Background(), previous) }()
+	req := httptest.NewRequest(http.MethodPut, "/api/preferences", strings.NewReader(`{"levels":["Intern","Junior"],"languages":["Go"],"max_hours":30,"min_salary":50000,"max_salary":150000,"currency":" RUB "}`))
 	req.SetBasicAuth("owner", "secret")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -491,6 +496,22 @@ func TestPreferencesAPI(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "Junior") {
 		t.Fatalf("get %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"max_salary":150000`) || !strings.Contains(w.Body.String(), `"currency":"RUB"`) {
+		t.Fatalf("pay preferences were not normalized and persisted: %s", w.Body.String())
+	}
+	for _, body := range []string{
+		`{"max_salary":100000}`,
+		`{"min_salary":150000,"max_salary":100000,"currency":"RUB"}`,
+	} {
+		req = httptest.NewRequest(http.MethodPut, "/api/preferences", strings.NewReader(body))
+		req.SetBasicAuth("owner", "secret")
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("invalid pay preferences accepted (%s): %d", body, w.Code)
+		}
 	}
 }
 
@@ -561,14 +582,14 @@ func TestCatalogUsesPersistedSalaryRanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	min := int64(100000)
-	if err = db.SavePreferences(ctx, jobs.Preferences{MinSalary: &min, Currency: "RUB"}); err != nil {
+	min, max := int64(100000), int64(130000)
+	if err = db.SavePreferences(ctx, jobs.Preferences{MinSalary: &min, MaxSalary: &max, Currency: "RUB"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, x := range []struct {
 		name   string
 		lo, hi int64
-	}{{"low", 50000, 90000}, {"cross", 90000, 120000}, {"good", 110000, 150000}} {
+	}{{"low", 50000, 90000}, {"cross-low", 90000, 120000}, {"within", 110000, 125000}, {"cross-high", 120000, 140000}, {"high", 140000, 150000}} {
 		lo, hi := x.lo, x.hi
 		if _, err = db.Observe(ctx, store.Observation{SourceID: src.ID, URL: src.URL + "/" + x.name, Title: x.name, SalaryMin: &lo, SalaryMax: &hi, Currency: "RUB"}); err != nil {
 			t.Fatal(err)
@@ -593,7 +614,7 @@ func TestCatalogUsesPersistedSalaryRanges(t *testing.T) {
 		}
 		found[j.Title] = j.Match
 	}
-	if len(found) != 2 || found["cross"] != "needs_clarification" || found["good"] != "suitable" {
+	if len(found) != 3 || found["cross-low"] != "needs_clarification" || found["within"] != "suitable" || found["cross-high"] != "needs_clarification" {
 		t.Fatalf("catalog %+v", found)
 	}
 }
@@ -839,6 +860,7 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 	}
 	components := doc["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
+	paths := doc["paths"].(map[string]any)
 	job := schemas["Job"].(map[string]any)
 	fields := job["properties"].(map[string]any)
 	for _, name := range []string{"hours", "salary", "salary_min", "salary_max", "currency", "closed", "apply_url"} {
@@ -846,7 +868,17 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 			t.Errorf("missing %s", name)
 		}
 	}
-	paths := doc["paths"].(map[string]any)
+	preferences := schemas["Preferences"].(map[string]any)["properties"].(map[string]any)
+	for _, name := range []string{"levels", "directions", "locations", "types", "languages", "companies", "work_modes", "max_hours", "min_salary", "max_salary", "currency"} {
+		if _, ok := preferences[name]; !ok {
+			t.Errorf("missing preference field %s", name)
+		}
+	}
+	put := paths["/api/preferences"].(map[string]any)["put"].(map[string]any)
+	requestSchema := put["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	if requestSchema["$ref"] != "#/components/schemas/Preferences" {
+		t.Errorf("preferences request schema = %v", requestSchema)
+	}
 	jobsPath := paths["/api/jobs"].(map[string]any)
 	list := jobsPath["get"].(map[string]any)
 	parameters := list["parameters"].([]any)
