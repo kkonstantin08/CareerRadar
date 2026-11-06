@@ -95,13 +95,14 @@
       },
       "DiscoveryResult": {
         "type":"object",
-        "required":["title","company","url","location","source","description"],
+        "required":["title","company","url","location","work_mode","source","description"],
         "properties": {
           "title":{"type":"string"},
           "company":{"type":"string"},
           "url":{"type":"string","format":"uri"},
-          "location":{"type":"string"},
-          "source":{"type":"string","enum":["Remotive"]},
+          "location":{"type":"string","description":"Empty when not explicitly extracted"},
+          "work_mode":{"type":"string","enum":["","remote"],"description":"Remote only when explicitly declared in the RSS entry"},
+          "source":{"type":"string","enum":["Хабр Карьера"]},
           "description":{"type":"string","description":"Plain text without scripts or styles"}
         }
       },
@@ -453,7 +454,7 @@
     },
     "/api/discovery": {
       "get": {
-        "summary": "Search public Remotive listings",
+        "summary": "Search public Habr Career RSS listings",
         "description": "Return up to 50 provider results whose title or plain description contains the query, ignoring case and repeated whitespace. An empty result is valid. This is a bounded provider search, not an exhaustive web search.",
         "parameters": [
           {
@@ -481,7 +482,7 @@
         }
       },
       "post": {
-        "summary": "Search Remotive and save results without enabling monitoring",
+        "summary": "Search Habr Career and save results without enabling monitoring",
         "description": "Apply the same title/description relevance check as GET. Save only matching results, preserving explicit title type and level labels; new sources stay disabled.",
         "requestBody": {
           "required": true,

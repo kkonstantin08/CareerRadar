@@ -882,9 +882,9 @@ func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	link := fmt.Sprintf("https://remotive.com/remote-jobs/test-%d", time.Now().UnixNano())
+	link := fmt.Sprintf("https://career.habr.com/vacancies/%d", time.Now().UnixMicro())
 	defer db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url=$1`, link)
-	result := discovery.Result{Title: "Go Engineer", Company: "Example", URL: link, Source: "Remotive", Location: "Worldwide", Description: "Build APIs in Go"}
+	result := discovery.Result{Title: "Go Engineer", Company: "Example", URL: link, Source: discovery.SourceName, Location: "Worldwide", WorkMode: "remote", Description: "Build APIs in Go"}
 	for i := 0; i < 2; i++ {
 		if err = db.SaveDiscovered(ctx, []discovery.Result{result}); err != nil {
 			t.Fatal(err)
@@ -911,7 +911,7 @@ func TestDiscoveredJobsPersistWithoutActivatingSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, src := range sources {
-		if src.URL == "https://remotive.com/remote-jobs" && src.Enabled {
+		if src.URL == discovery.SourceURL && src.Enabled {
 			t.Fatal("discovery source activated")
 		}
 	}
@@ -927,16 +927,19 @@ func TestDiscoveredTitlesRetainExplicitTypeAndLevel(t *testing.T) {
 		{"Backend Bootcamp", "Education / Bootcamp", ""},
 		{"Junior / Senior Engineer", "Job", ""},
 	} {
-		link := fmt.Sprintf("https://remotive.com/remote-jobs/explicit-role-%d", i)
-		result := discovery.Result{Title: tc.title, URL: link, Source: "Remotive"}
+		link := fmt.Sprintf("https://career.habr.com/vacancies/%d", 1000000000+i)
+		result := discovery.Result{Title: tc.title, URL: link, Source: discovery.SourceName}
 		for n := 0; n < 2; n++ {
 			if err := db.SaveDiscovered(ctx, []discovery.Result{result}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		var kind, level string
-		if err := db.db.QueryRow(`SELECT offer_type,level FROM jobs WHERE url=$1`, link).Scan(&kind, &level); err != nil {
+		var kind, level, mode string
+		if err := db.db.QueryRow(`SELECT offer_type,level,work_mode FROM jobs WHERE url=$1`, link).Scan(&kind, &level, &mode); err != nil {
 			t.Fatal(err)
+		}
+		if mode != "" {
+			t.Fatalf("invented remote mode: %q", mode)
 		}
 		if kind != tc.kind || level != tc.level {
 			t.Errorf("%s: got %q/%q want %q/%q", tc.title, kind, level, tc.kind, tc.level)
@@ -945,6 +948,19 @@ func TestDiscoveredTitlesRetainExplicitTypeAndLevel(t *testing.T) {
 		if err := db.db.QueryRow(`SELECT count(*) FROM job_history h JOIN jobs j ON j.id=h.job_id WHERE j.url=$1`, link).Scan(&revisions); err != nil || revisions != 1 {
 			t.Fatalf("revisions=%d err=%v", revisions, err)
 		}
+	}
+}
+
+func TestDiscoveryRejectsRemovedProvider(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	err := db.SaveDiscovered(ctx, []discovery.Result{{Title: "Engineer", URL: "https://remotive.com/remote-jobs/legacy", Source: "Remotive"}})
+	if err == nil {
+		t.Fatal("removed provider accepted")
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil || len(sources) != 0 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
 }
 
