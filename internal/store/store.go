@@ -20,6 +20,9 @@ import (
 	"github.com/kkonstantin08/CareerRadar/migrations"
 )
 
+// ErrStaleObservation indicates an overlapping newer check already saved this vacancy.
+var ErrStaleObservation = errors.New("overlapping newer check saved this vacancy; source requires attention")
+
 // Store holds the shared database connection pool.
 type Store struct{ db *sql.DB }
 
@@ -35,6 +38,7 @@ type Source struct {
 // Observation records facts published at a job URL.
 type Observation struct {
 	SourceID          int64  `json:"source_id"`
+	CheckOrder        int64  `json:"-"`
 	PageURL           string `json:"page_url"`
 	URL               string `json:"url"`
 	ApplyURL          string `json:"apply_url"`
@@ -97,7 +101,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (checksum BYTEA PRIMARY KEY)`); err != nil {
 		return err
 	}
-	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters, migrations.JobAliases} {
+	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters, migrations.JobAliases, migrations.ObservationOrder} {
 		sum := sha256.Sum256([]byte(migration))
 		var exists bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE checksum=$1)`, sum[:]).Scan(&exists); err != nil {
@@ -152,6 +156,13 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 		xs = append(xs, x)
 	}
 	return xs, rows.Err()
+}
+
+// NextCheckOrder reserves a database-wide ordering token before a source fetch.
+func (s *Store) NextCheckOrder(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT nextval('observation_order_seq')`).Scan(&n)
+	return n, err
 }
 
 // Observe saves changed facts without overwriting known fields with empty values.
@@ -214,6 +225,39 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	if id != 0 {
 		if identityErr := verifyStoredPostingIdentity(ctx, tx, id, identity); identityErr != nil {
 			return false, identityErr
+		}
+	}
+	stale := false
+	if id != 0 && x.CheckOrder > 0 {
+		var previous int64
+		if err := tx.QueryRowContext(ctx, `SELECT observation_order FROM jobs WHERE id=$1`, id).Scan(&previous); err != nil {
+			return false, err
+		}
+		if previous > x.CheckOrder {
+			stale = true
+			// Preserve newer known values while filling gaps from the earlier observation.
+			for _, pair := range []struct {
+				current *string
+				newer   string
+			}{
+				{&x.Title, old.Title}, {&x.Company, old.Company}, {&x.Description, old.Description},
+				{&x.Deadline, old.Deadline}, {&x.WorkMode, old.WorkMode},
+				{&x.Direction, old.Direction},
+				{&x.Language, old.Language}, {&x.ApplyURL, old.ApplyURL},
+			} {
+				if pair.newer != "" {
+					*pair.current = pair.newer
+				}
+			}
+			// Empty location and title-derived facets may be deliberate uncertainty.
+			x.Location, x.Level, x.Type = old.Location, old.Level, old.Type
+			x.LocationUncertain = old.Location == ""
+			if old.Hours != nil {
+				x.Hours = old.Hours
+			}
+			if old.Salary != nil || old.SalaryMin != nil || old.SalaryMax != nil {
+				x.Salary, x.SalaryMin, x.SalaryMax, x.Currency = old.Salary, old.SalaryMin, old.SalaryMax, old.Currency
+			}
 		}
 	}
 	if x.createOnly && err == nil {
@@ -296,6 +340,11 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 			}
 		}
 	}
+	if x.CheckOrder > 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE jobs SET observation_order=GREATEST(observation_order,$1) WHERE id=$2`, x.CheckOrder, id); err != nil {
+			return false, err
+		}
+	}
 	if x.PageURL == "" {
 		if err = tx.QueryRowContext(ctx, `SELECT url FROM sources WHERE id=$1`, x.SourceID).Scan(&x.PageURL); err != nil {
 			return false, err
@@ -322,6 +371,9 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	}
 	if err = tx.Commit(); err != nil {
 		return false, err
+	}
+	if stale {
+		return changed, ErrStaleObservation
 	}
 	return changed, nil
 }

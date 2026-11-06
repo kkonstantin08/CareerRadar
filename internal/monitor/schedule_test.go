@@ -817,3 +817,78 @@ func TestManualCheckAllowsZeroUpdateID(t *testing.T) {
 		t.Fatalf("state %q %v", state, err)
 	}
 }
+
+func TestConcurrentSourcesDoNotOverwriteNewerObservation(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("ordering_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	old, err := db.AddSource(ctx, "Old", "https://old.example/jobs", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := db.AddSource(ctx, "New", "https://new.example/jobs", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	svc := New(db, func(_ context.Context, source string) ([]collector.Job, error) {
+		title := "New title"
+		if source == old.URL {
+			close(entered)
+			<-release
+			title = "Old title"
+		}
+		job := collector.Job{URL: "https://career.habr.com/vacancies/1000061473", SourceURL: "https://career.habr.com/vacancies/1000061473", Title: title, Company: "Example", Deadline: "2027-01-01"}
+		if source == old.URL {
+			job.Description = "Confirmed requirements"
+			job.Level = "Junior"
+			job.Type = "Internship"
+			job.Location = "Kazan"
+		}
+		return []collector.Job{job}, nil
+	})
+	done := make(chan error, 1)
+	go func() { _, e := svc.Check(ctx, old.ID); done <- e }()
+	<-entered
+	if _, err = svc.Check(ctx, newer.ID); err != nil {
+		close(release)
+		<-done
+		t.Fatal(err)
+	}
+	close(release)
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := db.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].Title != "New title" || jobs[0].Description != "Confirmed requirements" || jobs[0].Level != "" || jobs[0].Type != "" || jobs[0].Location != "" {
+		t.Fatalf("stale observation overwrote newer result: %+v", jobs)
+	}
+}

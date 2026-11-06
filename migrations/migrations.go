@@ -17,3 +17,8 @@ var CatalogFilters string
 //
 //go:embed 003_job_aliases.sql
 var JobAliases string
+
+// ObservationOrder orders overlapping vacancy observations from source checks.
+//
+//go:embed 004_observation_order.sql
+var ObservationOrder string
