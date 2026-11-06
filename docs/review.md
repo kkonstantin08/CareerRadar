@@ -248,3 +248,7 @@ Company discovery now proposes explicitly linked Greenhouse, Lever and Ashby boa
 ## Public discovery smoke and local restart, 2026-11-07
 
 A read-only public company search for `Cloudflare` returned a career link for the candidate `Cloudflare Workers`; this demonstrates connectivity but not unambiguous identification of the intended company, nor specifically the hosted-board branch above. A separate read-only Habr search for `Go` returned 20 attributed results. Neither smoke saved vacancies or activated sources. The service was rebuilt from `e08d7d5` and restarted locally: authenticated cabinet, jobs, sources and OpenAPI returned HTTP 200, the Telegram link remained present, and zero sources were enabled.
+
+## Cyrillic company search, 2026-11-07
+
+Company discovery selects Russian Wikidata search for Cyrillic company names and English otherwise. Controlled tests check both paths. A public `Яндекс` smoke found a Yandex homepage candidate but no career link, so end-to-end company discovery for that name remains unverified and the smoke failed. The implementer ran the PostgreSQL-backed race suite, vet and build. This change does not render JavaScript pages or bypass site restrictions.

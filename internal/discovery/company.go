@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/net/html"
@@ -28,13 +29,20 @@ func Company(ctx context.Context, client *http.Client, name string) ([]CompanyRe
 	if n := utf8.RuneCountInString(name); n < 2 || n > 100 {
 		return nil, errors.New("invalid company name")
 	}
+	language := "en"
+	for _, r := range name {
+		if unicode.Is(unicode.Cyrillic, r) {
+			language = "ru"
+			break
+		}
+	}
 	var search struct {
 		Search []struct {
 			ID    string `json:"id"`
 			Label string `json:"label"`
 		} `json:"search"`
 	}
-	if err := getJSON(ctx, client, "https://www.wikidata.org/w/api.php?action=wbsearchentities&language=en&format=json&limit=3&search="+url.QueryEscape(name), &search); err != nil {
+	if err := getJSON(ctx, client, "https://www.wikidata.org/w/api.php?action=wbsearchentities&language="+language+"&format=json&limit=3&search="+url.QueryEscape(name), &search); err != nil {
 		return nil, err
 	}
 	out := []CompanyResult{}

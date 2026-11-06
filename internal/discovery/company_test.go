@@ -31,3 +31,19 @@ func TestCompanyDiscoveryProposesCareerLinks(t *testing.T) {
 		t.Fatalf("results %+v", results)
 	}
 }
+
+func TestCompanySearchUsesLanguageOfCompanyName(t *testing.T) {
+	for _, tc := range []struct{ name, language string }{{"Яндекс", "ru"}, {"Example", "en"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if got := r.URL.Query().Get("language"); got != tc.language {
+					t.Errorf("language=%q want %q", got, tc.language)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"search":[]}`)), Header: make(http.Header)}, nil
+			})}
+			if _, err := Company(context.Background(), client, tc.name); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
