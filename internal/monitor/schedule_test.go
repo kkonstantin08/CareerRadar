@@ -354,7 +354,9 @@ func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Junior Go Developer","hiringOrganization":{"name":"Example"},"validThrough":"2027-01-01","jobLocationType":"TELECOMMUTE","jobLocation":[{"address":"Казань"}],"baseSalary":{"currency":"RUR","value":{"minValue":80000,"maxValue":120000,"unitText":"MONTH"}}}</script>`
+	fetchCalls := 0
 	svc := New(db, func(_ context.Context, raw string) ([]collector.Job, error) {
+		fetchCalls++
 		found, err := collector.Parse(strings.NewReader(body), raw)
 		if err == nil && len(found) == 1 {
 			found[0].ApplyURL = "https://example.org/apply"
@@ -378,6 +380,35 @@ func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
 	got, err = db.Jobs(ctx)
 	if err != nil || len(got) != 1 || got[0].Location != "" || got[0].Closed {
 		t.Fatalf("uncertain job=%+v err=%v", got, err)
+	}
+	release, err := svc.LockHabr(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	blocked, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	before := fetchCalls
+	if _, err = svc.Check(blocked, src.ID); !errors.Is(err, context.DeadlineExceeded) || fetchCalls != before {
+		t.Fatalf("gate err=%v calls=%d before=%d", err, fetchCalls, before)
+	}
+	board, err := db.AddSource(ctx, "Habr board", "https://career.habr.com/vacancies", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedBoard, cancelBoard := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancelBoard()
+	if _, err = svc.Check(blockedBoard, board.ID); !errors.Is(err, context.DeadlineExceeded) || fetchCalls != before {
+		t.Fatalf("board gate err=%v calls=%d before=%d", err, fetchCalls, before)
+	}
+	other, err := db.AddSource(ctx, "Redirecting board", "https://example.org/careers", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedOther, cancelOther := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancelOther()
+	if _, err = svc.Check(blockedOther, other.ID); !errors.Is(err, context.DeadlineExceeded) || fetchCalls != before {
+		t.Fatalf("redirect gate err=%v calls=%d before=%d", err, fetchCalls, before)
 	}
 }
 

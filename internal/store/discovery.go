@@ -19,6 +19,9 @@ func (s *Store) SaveDiscovered(ctx context.Context, results []discovery.Result) 
 		if d := r.Details; d != nil && (d.Closed || discovery.VacancyURL(d.URL) != discovery.VacancyURL(r.URL) || discovery.VacancyURL(d.SourceURL) != discovery.VacancyURL(r.URL)) {
 			return errors.New("invalid discovery card evidence")
 		}
+		if r.Archived && (r.Details != nil || r.Problem != "" || collector.HabrArchiveEvidenceURL(r.URL) != r.URL) {
+			return errors.New("invalid archive evidence")
+		}
 	}
 	src, err := s.AddSource(ctx, discovery.SourceName+" — глобальный поиск", discovery.SourceURL, false)
 	if err != nil {
@@ -26,6 +29,21 @@ func (s *Store) SaveDiscovered(ctx context.Context, results []discovery.Result) 
 	}
 	problem := ""
 	for _, r := range results {
+		if r.Archived {
+			closed, err := s.ConfirmClosedURL(ctx, r.URL, r.URL)
+			if err != nil {
+				return err
+			}
+			if !closed {
+				problem = "Архивная вакансия не была сохранена ранее."
+			}
+			continue
+		}
+		if r.Details != nil && r.Problem == "" {
+			if err := s.ReopenHabr(ctx, r.URL, r.URL); err != nil {
+				return err
+			}
+		}
 		offerType, level := collector.TitleFacts(r.Title)
 		x := Observation{SourceID: src.ID, PageURL: r.URL, URL: discovery.VacancyURL(r.URL), Title: r.Title, Company: r.Company, Location: r.Location, Description: r.Description, WorkMode: r.WorkMode, Type: offerType, Level: level, createOnly: true}
 		if d := r.Details; d != nil {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
+	"github.com/kkonstantin08/CareerRadar/internal/monitor"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
 )
 
@@ -657,6 +658,25 @@ func TestCompanyDiscoveryValidatesName(t *testing.T) {
 	}
 }
 
+func TestDiscoveryWaitsForHabrMutationGate(t *testing.T) {
+	checks := monitor.New(nil, nil)
+	release, err := checks.LockHabr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/discovery", strings.NewReader(`{"query":"Go"}`)).WithContext(ctx)
+	req.SetBasicAuth("owner", "secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	Handler(nil, "owner", "secret", checks).ServeHTTP(w, req)
+	if w.Code != http.StatusRequestTimeout {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestDiscoveryAPIQueryCharacterBoundaries(t *testing.T) {
 	h := New(nil, "owner", "secret")
 	for _, length := range []int{1, 2, 100, 101} {
@@ -679,6 +699,9 @@ func TestDiscoveryAPIQueryCharacterBoundaries(t *testing.T) {
 			want := http.StatusBadRequest
 			if length >= 2 && length <= 100 {
 				want = http.StatusBadGateway
+				if path == "POST" {
+					want = http.StatusRequestTimeout
+				}
 			}
 			if w.Code != want {
 				t.Errorf("%s length %d: status %d, want %d", path, length, w.Code, want)

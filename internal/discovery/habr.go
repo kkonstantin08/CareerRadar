@@ -33,6 +33,7 @@ type Result struct {
 	Source      string         `json:"source"`
 	Description string         `json:"description"`
 	Problem     string         `json:"problem,omitempty"`
+	Archived    bool           `json:"archived"`
 	Details     *collector.Job `json:"-"`
 }
 

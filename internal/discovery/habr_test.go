@@ -96,6 +96,27 @@ func TestSearchEnrichesMatchingCardsAndRetainsUnavailableRSS(t *testing.T) {
 	}
 }
 
+func TestSearchReportsArchivedCardOnlyWithVerifiedEvidence(t *testing.T) {
+	for _, status := range []int{200, 403} {
+		client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+			body := `<div class="no-content__title">Вакансия в архиве</div>`
+			code := status
+			if r.URL.Path == "/vacancies/rss" {
+				body = `<rss><channel><item><title>Go Engineer</title><link>https://career.habr.com/vacancies/1000000001</link><description>Go</description></item></channel></rss>`
+				code = 200
+			}
+			return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+		})}
+		got, err := Search(context.Background(), client, "Go")
+		if err != nil || len(got) != 1 || got[0].Archived != (status == 200) {
+			t.Fatalf("status=%d result=%+v err=%v", status, got, err)
+		}
+		if status == 403 && (got[0].Problem == "" || got[0].Details != nil) {
+			t.Fatalf("inaccessible card lost warning: %+v", got[0])
+		}
+	}
+}
+
 func TestHabrSearchHandlesEmptyInvalidAndUnavailableFeeds(t *testing.T) {
 	for _, tc := range []struct {
 		body   string

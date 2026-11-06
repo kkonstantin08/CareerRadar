@@ -27,6 +27,10 @@ func enrichCards(ctx context.Context, client *http.Client, results []Result) {
 				if err != nil {
 					r.Problem = "Карточка требует внимания: " + err.Error()
 				}
+				if err == nil && len(found) == 1 && found[0].Closed && found[0].URL == r.URL && found[0].SourceURL == r.URL {
+					r.Archived = true
+					continue
+				}
 				if len(found) != 1 || found[0].Closed || VacancyURL(found[0].URL) != r.URL || VacancyURL(found[0].SourceURL) != r.URL {
 					if r.Problem == "" {
 						r.Problem = "Не удалось однозначно сопоставить карточку вакансии"

@@ -100,6 +100,12 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 			http.Error(w, "invalid search query", 400)
 			return
 		}
+		release, err := checks.LockHabr(r.Context())
+		if err != nil {
+			http.Error(w, "search cancelled", http.StatusRequestTimeout)
+			return
+		}
+		defer release()
 		results, err := discovery.Search(r.Context(), collector.Client(), input.Query)
 		if err != nil {
 			http.Error(w, "global search unavailable", 502)

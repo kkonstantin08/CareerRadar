@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
+	"golang.org/x/sync/semaphore"
 )
 
 // ErrNotFound indicates a missing source.
@@ -23,6 +25,7 @@ type Service struct {
 	fetch       func(context.Context, string) ([]collector.Job, error)
 	locks       [64]sync.Mutex
 	limit       chan struct{}
+	habrGate    *semaphore.Weighted
 	jobicyMu    sync.Mutex
 	jobicyBatch func(context.Context, []string) (map[string]string, error)
 	jobicyFetch func(context.Context, string, string) ([]collector.Job, error)
@@ -79,7 +82,19 @@ func (s *Service) jobicyStatus(ctx context.Context, id string, sources []store.S
 
 // New creates a monitor backed by the shared database.
 func New(db *store.Store, fetch func(context.Context, string) ([]collector.Job, error)) *Service {
-	return &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2)}
+	return &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2), habrGate: semaphore.NewWeighted(2)}
+}
+
+// LockHabr serializes Habr observations through database updates on this shared service.
+func (s *Service) LockHabr(ctx context.Context) (func(), error) {
+	// shortcut: serialize updates through one shared Service; use database ordering for multiple service instances.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.habrGate.Acquire(ctx, 2); err != nil {
+		return nil, err
+	}
+	return func() { s.habrGate.Release(2) }, nil
 }
 
 // Check reads a confirmed source and records its result without inferring closure.
@@ -103,6 +118,19 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 	}
 	if !src.Enabled {
 		return "", ErrNotConfirmed
+	}
+	if sourceURL, err := url.Parse(src.URL); err == nil && strings.EqualFold(sourceURL.Hostname(), "career.habr.com") {
+		release, err := s.LockHabr(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+	} else {
+		// Any source can redirect to Habr, so it must not overlap a discovery update.
+		if err := s.habrGate.Acquire(ctx, 1); err != nil {
+			return "", err
+		}
+		defer s.habrGate.Release(1)
 	}
 	select {
 	case s.limit <- struct{}{}:

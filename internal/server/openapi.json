@@ -95,7 +95,7 @@
       },
       "DiscoveryResult": {
         "type":"object",
-        "required":["title","company","url","location","work_mode","source","description"],
+        "required":["title","company","url","location","work_mode","source","description","archived"],
         "properties": {
           "title":{"type":"string"},
           "company":{"type":"string"},
@@ -104,6 +104,7 @@
           "work_mode":{"type":"string","enum":["","remote"],"description":"Published RSS or card work mode"},
           "source":{"type":"string","enum":["Хабр Карьера"]},
           "description":{"type":"string","description":"Plain text without scripts or styles"},
+          "archived":{"type":"boolean","description":"Archive confirmed by the exact Habr vacancy page"},
           "problem":{"type":"string","description":"Card retrieval or incomplete-data warning"}
         }
       },
@@ -484,7 +485,7 @@
       },
       "post": {
         "summary": "Search Habr Career and save results without enabling monitoring",
-        "description": "Apply the same title/description relevance check as GET. Save only matching results, preserving explicit title type and level labels; new sources stay disabled.",
+        "description": "Apply the same title/description relevance check as GET. Save only matching results, preserving explicit title type and level labels; new sources stay disabled. Archived results update only previously saved vacancies. Discovery and potentially overlapping source checks are coordinated within the shared monitor service instance.",
         "requestBody": {
           "required": true,
           "content": {
@@ -512,6 +513,9 @@
           },
           "400": {
             "description": "Invalid query"
+          },
+          "408": {
+            "description": "Search cancelled while waiting for another Habr update"
           },
           "502": {
             "description": "Search unavailable"

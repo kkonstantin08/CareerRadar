@@ -1031,6 +1031,75 @@ func TestNewPartialCardUsesPublishedRSSFields(t *testing.T) {
 	}
 }
 
+func TestDiscoveryArchiveClosesOnlyPreviouslyKnownJob(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	link := "https://career.habr.com/vacancies/1000061473"
+	r := discovery.Result{Title: "Go Engineer", URL: link, Source: discovery.SourceName, Archived: true}
+	if err := db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := db.Jobs(ctx)
+	if err != nil || len(all) != 0 {
+		t.Fatalf("unseen archive created job=%+v err=%v", all, err)
+	}
+	r.Archived = false
+	if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	all, err = db.Jobs(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("jobs=%+v err=%v", all, err)
+	}
+	id := all[0].ID
+	r.Archived = true
+	for range 2 {
+		if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := db.Details(ctx, id)
+	if err != nil || !d.Job.Closed || len(d.History) != 2 {
+		t.Fatalf("archive=%+v err=%v", d, err)
+	}
+	var notices int
+	if err = db.db.QueryRow(`SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("closure:%d:%%", id)).Scan(&notices); err != nil || notices != 1 {
+		t.Fatalf("closure notices=%d err=%v", notices, err)
+	}
+	r.Archived = false
+	r.Details = &collector.Job{URL: link, SourceURL: link, Title: "Go Engineer", Company: "Example", Deadline: "2027-01-01"}
+	r.Problem = "partial fetch"
+	if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	d, err = db.Details(ctx, id)
+	if err != nil || !d.Job.Closed {
+		t.Fatalf("partial result reopened vacancy: %+v err=%v", d, err)
+	}
+	r.Problem = ""
+	if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	d, err = db.Details(ctx, id)
+	if err != nil || d.Job.Closed || len(d.History) < 3 {
+		t.Fatalf("reopened=%+v err=%v", d, err)
+	}
+	if err = db.ConfirmClosed(ctx, id, link); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SaveDiscovered(ctx, []discovery.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	d, err = db.Details(ctx, id)
+	if err != nil || !d.Job.Closed {
+		t.Fatalf("owner closure overwritten: %+v err=%v", d, err)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil || len(sources) != 1 || sources[0].Enabled {
+		t.Fatalf("source activated: %+v err=%v", sources, err)
+	}
+}
+
 func TestOldNotificationAttemptCannotFinishNewAttempt(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
