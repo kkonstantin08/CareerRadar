@@ -94,17 +94,19 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (checksum BYTEA PRIMARY KEY)`); err != nil {
 		return err
 	}
-	sum := sha256.Sum256([]byte(migrations.Initial))
-	var exists bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE checksum=$1)`, sum[:]).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		if _, err = tx.ExecContext(ctx, migrations.Initial); err != nil {
+	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters} {
+		sum := sha256.Sum256([]byte(migration))
+		var exists bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE checksum=$1)`, sum[:]).Scan(&exists); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(checksum) VALUES($1)`, sum[:]); err != nil {
-			return err
+		if !exists {
+			if _, err = tx.ExecContext(ctx, migration); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(checksum) VALUES($1)`, sum[:]); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
@@ -389,7 +391,57 @@ func (s *Store) RecentJobCounts(ctx context.Context, since time.Time) (total, ad
 
 // Jobs lists stored jobs, newest first.
 func (s *Store) Jobs(ctx context.Context) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs ORDER BY updated_at DESC,id DESC`)
+	return s.JobsFiltered(ctx, JobFilters{})
+}
+
+// JobFilters narrows the opportunity catalog by explicitly selected values.
+type JobFilters struct {
+	Query      string
+	Levels     []string
+	Directions []string
+	Languages  []string
+	Companies  []string
+	Locations  []string
+	Types      []string
+	WorkModes  []string
+}
+
+// JobsFiltered lists stored jobs matching the selected catalog filters, newest first.
+func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, error) {
+	args := []any{"%" + strings.TrimSpace(filter.Query) + "%"}
+	conditions := []string{"($1 = '%%' OR title ILIKE $1 OR company ILIKE $1)"}
+	// Values within a facet are alternatives; different facets must all match.
+	for _, item := range []struct {
+		column string
+		values []string
+	}{
+		{"level", filter.Levels}, {"direction", filter.Directions}, {"language", filter.Languages},
+		{"company", filter.Companies}, {"location", filter.Locations}, {"offer_type", filter.Types}, {"work_mode", filter.WorkModes},
+	} {
+		if len(item.values) == 0 {
+			continue
+		}
+		values := make([]string, 0, len(item.values))
+		for _, value := range item.values {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value != "" {
+				values = append(values, value)
+			}
+		}
+		if len(values) == 0 {
+			continue
+		}
+		args = append(args, values)
+		position := len(args)
+		if item.column == "language" {
+			// A posting can publish several languages in one comma-separated field.
+			conditions = append(conditions, fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(string_to_array(language, ',')) AS value WHERE lower(trim(value))=ANY($%d::text[]))", position))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("%s<>'' AND lower(%s)=ANY($%d::text[])", item.column, item.column, position))
+		}
+	}
+	query := `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY updated_at DESC,id DESC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

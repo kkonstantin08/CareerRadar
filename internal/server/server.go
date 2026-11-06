@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kkonstantin08/CareerRadar/internal/store"
 )
@@ -318,7 +319,12 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		xs, err := db.Jobs(r.Context())
+		filter, valid := jobFilters(r)
+		if !valid {
+			http.Error(w, "invalid job filters", 400)
+			return
+		}
+		xs, err := db.JobsFiltered(r.Context(), filter)
 		if err != nil {
 			http.Error(w, "database error", 500)
 			return
@@ -476,6 +482,36 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func jobFilters(r *http.Request) (store.JobFilters, bool) {
+	q := r.URL.Query()
+	filter := store.JobFilters{Query: strings.TrimSpace(q.Get("q"))}
+	if utf8.RuneCountInString(filter.Query) > 100 {
+		return store.JobFilters{}, false
+	}
+	for _, field := range []struct {
+		key    string
+		target *[]string
+	}{
+		{"level", &filter.Levels}, {"direction", &filter.Directions}, {"language", &filter.Languages},
+		{"company", &filter.Companies}, {"location", &filter.Locations}, {"type", &filter.Types}, {"work_mode", &filter.WorkModes},
+	} {
+		values := q[field.key]
+		if len(values) > 20 {
+			return store.JobFilters{}, false
+		}
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if utf8.RuneCountInString(value) > 100 {
+				return store.JobFilters{}, false
+			}
+			if value != "" {
+				*field.target = append(*field.target, value)
+			}
+		}
+	}
+	return filter, true
 }
 
 func publicURL(raw string) bool {

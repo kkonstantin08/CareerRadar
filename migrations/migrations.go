@@ -1,4 +1,4 @@
-// Package migrations provides the initial database schema.
+// Package migrations embeds the ordered database schema migrations.
 package migrations
 
 import _ "embed"
@@ -7,3 +7,8 @@ import _ "embed"
 //
 //go:embed 001_initial.sql
 var Initial string
+
+// CatalogFilters contains indexes for case-insensitive catalog facets.
+//
+//go:embed 002_catalog_filters.sql
+var CatalogFilters string

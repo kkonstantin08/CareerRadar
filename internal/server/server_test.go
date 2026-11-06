@@ -54,6 +54,60 @@ func TestAPIRequiresAuthenticationAndCreatesSources(t *testing.T) {
 	}
 }
 
+func TestJobFiltersAcceptRepeatedValuesAndBoundInput(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?q=backend&level=Intern&level=Junior&language=Go", nil)
+	filter, ok := jobFilters(req)
+	if !ok || filter.Query != "backend" || len(filter.Levels) != 2 || filter.Levels[1] != "Junior" || len(filter.Languages) != 1 || filter.Languages[0] != "Go" {
+		t.Fatalf("filter = %+v, valid = %t", filter, ok)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/jobs?q="+strings.Repeat("x", 101), nil)
+	if _, ok = jobFilters(req); ok {
+		t.Fatal("accepted an oversized search query")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/jobs?q="+url.QueryEscape(strings.Repeat("ю", 100)), nil)
+	if _, ok = jobFilters(req); !ok {
+		t.Fatal("rejected a 100-character Cyrillic search query")
+	}
+}
+
+func TestJobsEndpointAppliesCatalogFilters(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := "https://catalog-api.example.org/filter-test"
+	company := "Catalog Filter Test"
+	source, err := db.AddSource(ctx, "Catalog API", base, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, source.ID)
+	for _, item := range []store.Observation{
+		{SourceID: source.ID, URL: base + "/1", Title: "Backend", Company: company, Direction: "Backend", Language: "Python, Go"},
+		{SourceID: source.ID, URL: base + "/2", Title: "QA", Company: company, Direction: "QA", Language: "Python"},
+	} {
+		if _, err = db.Observe(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?company="+url.QueryEscape(company)+"&direction=Backend&direction=Data+Engineering&language=Go", nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	var got []struct {
+		URL string `json:"url"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || got[0].URL != base+"/1" {
+		t.Fatalf("catalog response %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestMonitoringStoresObservationsAndPreservesThemOnFailure(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -717,6 +771,20 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 	for _, name := range []string{"hours", "salary", "salary_min", "salary_max", "currency", "closed", "apply_url"} {
 		if _, ok := fields[name]; !ok {
 			t.Errorf("missing %s", name)
+		}
+	}
+	paths := doc["paths"].(map[string]any)
+	jobsPath := paths["/api/jobs"].(map[string]any)
+	list := jobsPath["get"].(map[string]any)
+	parameters := list["parameters"].([]any)
+	if len(parameters) != 8 {
+		t.Fatalf("catalog filter parameters = %d, want 8", len(parameters))
+	}
+	for _, raw := range parameters[1:] {
+		parameter := raw.(map[string]any)
+		schema := parameter["schema"].(map[string]any)
+		if schema["maxItems"] != float64(20) {
+			t.Errorf("%s maxItems = %v, want 20", parameter["name"], schema["maxItems"])
 		}
 	}
 }

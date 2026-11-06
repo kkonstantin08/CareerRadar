@@ -78,6 +78,44 @@ func TestSourcesAndRepeatedObservations(t *testing.T) {
 	}
 }
 
+func TestJobsFilteredMatchesMultipleValuesAndLanguageTokens(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	base := fmt.Sprintf("https://filter.example.org/%d", time.Now().UnixNano())
+	source, err := db.AddSource(ctx, "Filter test", base, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.db.ExecContext(ctx, `DELETE FROM jobs WHERE url LIKE $1`, base+"/%")
+		_, _ = db.db.ExecContext(ctx, `DELETE FROM sources WHERE id=$1`, source.ID)
+	})
+	company := fmt.Sprintf("Filter %d", time.Now().UnixNano())
+	for _, job := range []Observation{
+		{SourceID: source.ID, URL: base + "/1", Title: "Backend Go", Company: company, Direction: "Backend", Language: "Python, Go"},
+		{SourceID: source.ID, URL: base + "/2", Title: "QA Python", Company: company, Direction: "QA", Language: "Python"},
+	} {
+		if _, err = db.Observe(ctx, job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.JobsFiltered(ctx, JobFilters{Directions: []string{"Backend", "Data Engineering"}, Languages: []string{"Go"}, Companies: []string{company}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].URL != base+"/1" {
+		t.Fatalf("filtered jobs = %+v", got)
+	}
+}
+
 func TestJobNotificationsDescribeNewAndChangedConditions(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

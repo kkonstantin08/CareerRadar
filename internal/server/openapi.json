@@ -305,6 +305,16 @@
     "/api/jobs": {
       "get": {
         "summary": "List opportunities",
+        "parameters": [
+          {"in":"query","name":"q","schema":{"type":"string","maxLength":100},"description":"Search title and company"},
+          {"in":"query","name":"level","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"direction","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"language","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"company","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"location","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"type","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"work_mode","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true}
+        ],
         "responses": {
           "200": {
             "description": "Success",
