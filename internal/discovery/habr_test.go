@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -175,5 +176,20 @@ func TestSearchDeduplicatesFeedBeforeResultLimit(t *testing.T) {
 	got, err := Search(context.Background(), client, "Go")
 	if err != nil || len(got) != 2 || got[0].URL == got[1].URL || cards.Load() != 2 {
 		t.Fatalf("results=%+v cards=%d err=%v", got, cards.Load(), err)
+	}
+}
+
+func TestCompanyCareerLinksIncludeExplicitSupportedBoards(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `<a href="https://jobs.lever.co:443/example?source=homepage">Join us</a><a href="https://jobs.ashbyhq.com/example">Open positions</a><a href="https://boards.greenhouse.io/example">Our team</a><a href="https://jobs.lever.co.evil.test/example">Jobs</a>`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	home, err := url.Parse("https://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, err := careerLinks(context.Background(), client, home)
+	if err != nil || len(links) != 3 || links[0] != "https://jobs.lever.co/example" {
+		t.Fatalf("links=%v err=%v", links, err)
 	}
 }

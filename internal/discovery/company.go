@@ -140,15 +140,19 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 				}
 			}
 			text := strings.ToLower(href + " " + nodeText(n))
-			if strings.Contains(text, "career") || strings.Contains(text, "vacanc") || strings.Contains(text, "jobs") || strings.Contains(text, "ваканс") || strings.Contains(text, "карьер") {
-				ref, e := url.Parse(href)
-				if e == nil {
-					u := home.ResolveReference(ref)
-					domain, e := publicsuffix.EffectiveTLDPlusOne(u.Hostname())
-					if e == nil && domain == root && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && !seen[u.String()] {
-						seen[u.String()] = true
-						out = append(out, u.String())
-					}
+			ref, e := url.Parse(href)
+			if e == nil && href != "" {
+				u := home.ResolveReference(ref)
+				domain, domainErr := publicsuffix.EffectiveTLDPlusOne(u.Hostname())
+				board := supportedCareerBoard(u)
+				if board {
+					u.Host = u.Hostname()
+					u.RawQuery, u.Fragment, u.ForceQuery = "", "", false
+				}
+				named := strings.Contains(text, "career") || strings.Contains(text, "vacanc") || strings.Contains(text, "jobs") || strings.Contains(text, "ваканс") || strings.Contains(text, "карьер")
+				if ((domainErr == nil && domain == root && named) || board) && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && !seen[u.String()] {
+					seen[u.String()] = true
+					out = append(out, u.String())
 				}
 			}
 		}
@@ -158,6 +162,28 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 	}
 	walk(doc)
 	return out, nil
+}
+
+// supportedCareerBoard accepts an explicitly linked board on a supported provider.
+func supportedCareerBoard(u *url.URL) bool {
+	if u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") || u.RawPath != "" {
+		return false
+	}
+	switch u.Hostname() {
+	case "jobs.lever.co", "jobs.ashbyhq.com", "boards.greenhouse.io", "job-boards.greenhouse.io":
+	default:
+		return false
+	}
+	board := strings.Trim(u.Path, "/")
+	if board == "" {
+		return false
+	}
+	for _, r := range board {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func nodeText(n *html.Node) string {
