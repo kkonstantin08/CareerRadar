@@ -157,19 +157,34 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			currency := ""
 			if base, ok := v["baseSalary"].(map[string]any); ok {
 				c, _ := base["currency"].(string)
+				c = strings.TrimSpace(c)
 				if value, ok := base["value"].(map[string]any); ok {
 					unit, _ := value["unitText"].(string)
-					if strings.EqualFold(unit, "MONTH") && c != "" {
+					months := int64(0)
+					switch strings.ToUpper(strings.TrimSpace(unit)) {
+					case "MONTH":
+						months = 1
+					case "YEAR":
+						months = 12
+					}
+					if months > 0 && c != "" {
 						amount := salaryAmount(value["value"])
 						lo, hi := salaryAmount(value["minValue"]), salaryAmount(value["maxValue"])
 						hasAmount := value["value"] != nil
 						hasMin := value["minValue"] != nil
 						hasMax := value["maxValue"] != nil
 						if amount != nil && !hasMin && !hasMax {
-							salary, currency = amount, c
+							currency = c
+							if *amount%months == 0 {
+								n := *amount / months
+								salary = &n
+							} else {
+								salaryMin, salaryMax = monthlySalaryBounds(amount, amount, months)
+							}
 						}
 						if !hasAmount && (lo != nil || hi != nil) && (!hasMin || lo != nil) && (!hasMax || hi != nil) && (lo == nil || hi == nil || *lo <= *hi) {
-							salaryMin, salaryMax, currency = lo, hi, c
+							salaryMin, salaryMax = monthlySalaryBounds(lo, hi, months)
+							currency = c
 						}
 					}
 				}
@@ -475,6 +490,23 @@ func salaryAmount(value any) *int64 {
 	}
 	amount := int64(n)
 	return &amount
+}
+
+// monthlySalaryBounds rounds outward to avoid false matches at whole-currency preference limits.
+func monthlySalaryBounds(minimum, maximum *int64, months int64) (*int64, *int64) {
+	var lo, hi *int64
+	if minimum != nil {
+		n := *minimum / months
+		lo = &n
+	}
+	if maximum != nil {
+		n := *maximum / months
+		if *maximum%months != 0 {
+			n++
+		}
+		hi = &n
+	}
+	return lo, hi
 }
 
 func schemaObjects(value any) []map[string]any {

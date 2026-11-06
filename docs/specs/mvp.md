@@ -7,3 +7,5 @@ Acceptance: source creation, discovery and confirmation, editing, disabling, del
 Security: the personal API must not be public without authentication; source fetching must not grant access to private network targets or follow unsafe redirects. Secrets stay in environment variables. Telegram linking is one-use, expires, and cannot silently replace an existing link.
 
 Cross-source identity: retain persistent aliases only for verified individual Greenhouse, Lever and Ashby posting paths. Generic forms or similar titles do not establish identity. Keep both records and report attention when existing aliases conflict. Preserve source evidence, history and application status across incomplete rechecks.
+
+Pay normalization: accept explicit MONTH and YEAR salary units from schema.org JSON-LD and Microdata. Convert annual pay to monthly equivalents with outward rounding to whole currency units; retain fractional equivalents as ranges. Do not infer monthly pay from hourly or weekly amounts without a published workload.

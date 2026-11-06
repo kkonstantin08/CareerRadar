@@ -159,3 +159,15 @@ The implementer tested concurrent mirrored observations, unchanged notification 
 Live Telegram setup was exercised with an owner-supplied bot token held outside the repository. Telegram `getMe` confirmed the bot identity, a one-use code linked the owner's private chat, PostgreSQL persisted the processed update, and Telegram accepted the queued linking response. A `sent` outbox row proves API acknowledgement, not manual confirmation that the owner read it. Full live command coverage and a public HTTPS cabinet deployment remain unverified.
 
 After the final alias fixes, the implementer reran the full PostgreSQL-backed `go test -race -count=1 ./...`, `go vet ./...`, build and `git diff --check`; all passed. The local service restarted against its dedicated non-test database with the new migration, retained the Telegram owner link and processed-update receipt, and still had exactly one acknowledged linking reply. Authenticated jobs, sources, preferences, OpenAPI and Swagger returned HTTP 200; unauthenticated jobs returned 401. Runtime configuration files outside the repository have mode 0600. Manual live `/help`, `/sources` and `/jobs` response checks are pending.
+
+
+## Live Telegram command acceptance, 2026-11-06
+
+After restart, the owner manually confirmed receiving `/help`, `/sources` and `/jobs` responses. The dedicated application database contains four processed updates and four sent replies including the initial linking response. This provides manual acceptance for linking and these three basic commands, in addition to the controlled PostgreSQL tests for source mutations, statuses, queue recovery and idempotency; it does not verify every live command on populated data.
+
+
+## Annual schema.org pay extraction, 2026-11-06
+
+Explicit YEAR salaries in JSON-LD and Microdata now normalize to monthly equivalents, alongside existing MONTH salaries. Exact annual amounts divisible by twelve remain exact; fractional equivalents become outward-rounded bounds. One-sided ranges remain one-sided, invalid values remain unknown, and hourly or weekly rates are not converted without workload facts. Ashby reuses the same bounds calculation.
+
+GPT-6 Luna (High) independently reviewed arithmetic, accepted units, malformed values, overflow bounds, range matching and compatibility with Ashby. It found no implementation defect and requested that both READMEs describe schema.org annual support as well as Ashby; that wording is updated. The reviewer did not rerun tests. The implementer observed failing annual JSON-LD/Microdata tests before implementation, then passed focused tests, the full PostgreSQL-backed race suite, vet, build and `git diff --check`.

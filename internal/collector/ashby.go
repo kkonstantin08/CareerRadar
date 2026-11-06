@@ -134,17 +134,7 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 			}
 			// The salary filters use monthly values, so normalize only explicit month/year intervals.
 			if divisor > 0 && strings.TrimSpace(currency) != "" && (minimum != nil || maximum != nil) && (minimum == nil || maximum == nil || *minimum <= *maximum) {
-				if minimum != nil {
-					*minimum /= divisor
-				}
-				if maximum != nil {
-					// Round outward so fractional monthly pay cannot falsely pass a salary limit.
-					remainder := *maximum % divisor
-					*maximum /= divisor
-					if remainder != 0 {
-						*maximum += 1
-					}
-				}
+				minimum, maximum = monthlySalaryBounds(minimum, maximum, divisor)
 				if minimum != nil && maximum != nil && *minimum == *maximum {
 					j.Salary = minimum
 				} else {

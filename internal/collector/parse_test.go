@@ -291,7 +291,7 @@ func TestParseMonthlySalaryRange(t *testing.T) {
 	}{
 		{`{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"MONTH"}}`, true},
 		{`{"currency":"RUB","value":{"minValue":120000,"maxValue":80000,"unitText":"MONTH"}}`, false},
-		{`{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"YEAR"}}`, false},
+		{`{"currency":"RUB","value":{"minValue":80000,"maxValue":120000,"unitText":"HOUR"}}`, false},
 		{`{"currency":"RUB","value":{"minValue":9007199254740992,"maxValue":9007199254740993,"unitText":"MONTH"}}`, false},
 		{`{"currency":"RUB","value":{"value":100000,"minValue":"invalid","unitText":"MONTH"}}`, false},
 	} {
@@ -329,6 +329,45 @@ func TestParsePartialMonthlySalaryRange(t *testing.T) {
 }
 
 func salaryTestAmount(n int64) *int64 { return &n }
+
+func TestParseAnnualSalaryAsConservativeMonthlyValues(t *testing.T) {
+	for _, tc := range []struct {
+		value           string
+		exact, min, max *int64
+	}{
+		{`"value":120000`, salaryTestAmount(10000), nil, nil},
+		{`"value":120001`, nil, salaryTestAmount(10000), salaryTestAmount(10001)},
+		{`"minValue":120001,"maxValue":240001`, nil, salaryTestAmount(10000), salaryTestAmount(20001)},
+		{`"minValue":120001`, nil, salaryTestAmount(10000), nil},
+		{`"maxValue":120001`, nil, nil, salaryTestAmount(10001)},
+	} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","baseSalary":{"currency":"RUB","value":{"unitText":"YEAR",` + tc.value + `}}}</script>`
+		got, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("jobs=%+v err=%v", got, err)
+		}
+		j := got[0]
+		if !reflect.DeepEqual(j.Salary, tc.exact) || !reflect.DeepEqual(j.SalaryMin, tc.min) || !reflect.DeepEqual(j.SalaryMax, tc.max) || j.Currency != "RUB" {
+			t.Errorf("annual %s: %+v", tc.value, j)
+		}
+	}
+}
+
+func TestParseAnnualSalaryFromMicrodata(t *testing.T) {
+	body, err := os.ReadFile("testdata/microdata-job.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	annual := strings.NewReplacer(`content="MONTH"`, `content="YEAR"`, `content="80000"`, `content="120001"`, `content="120000"`, `content="240001"`).Replace(string(body))
+	got, err := Parse(strings.NewReader(annual), "https://example.org/job")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+	j := got[0]
+	if j.Salary != nil || j.SalaryMin == nil || *j.SalaryMin != 10000 || j.SalaryMax == nil || *j.SalaryMax != 20001 || j.Currency != "RUB" {
+		t.Fatalf("annual Microdata=%+v", j)
+	}
+}
 
 func TestParseExplicitSkillAndOccupation(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","occupationalCategory":"Backend","skills":["Go"]}</script>`
