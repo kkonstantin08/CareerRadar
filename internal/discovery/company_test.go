@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -45,5 +46,33 @@ func TestCompanySearchUsesLanguageOfCompanyName(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestCareerLinksResolveAgainstRedirectedHomepage(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/" {
+			return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://example.org/about/"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`<a href="careers">Careers</a>`)), Request: r}, nil
+	})}
+	home, _ := url.Parse("https://example.org/")
+	got, err := careerLinks(context.Background(), client, home)
+	if err != nil || len(got) != 1 || got[0] != "https://example.org/about/careers" {
+		t.Fatalf("links=%v err=%v", got, err)
+	}
+}
+
+func TestCareerLinksRejectCrossDomainHomepageRedirect(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "example.org" {
+			return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://evil.test/"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`<a href="https://jobs.lever.co/attacker">Jobs</a>`)), Request: r}, nil
+	})}
+	home, _ := url.Parse("https://example.org/")
+	links, err := careerLinks(context.Background(), client, home)
+	if err == nil || len(links) != 0 {
+		t.Fatalf("links=%v err=%v", links, err)
 	}
 }

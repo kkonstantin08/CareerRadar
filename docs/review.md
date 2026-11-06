@@ -252,3 +252,7 @@ A read-only public company search for `Cloudflare` returned a career link for th
 ## Cyrillic company search, 2026-11-07
 
 Company discovery selects Russian Wikidata search for Cyrillic company names and English otherwise. Controlled tests check both paths. A public `Яндекс` smoke found a Yandex homepage candidate but no career link, so end-to-end company discovery for that name remains unverified and the smoke failed. The implementer ran the PostgreSQL-backed race suite, vet and build. This change does not render JavaScript pages or bypass site restrictions.
+
+## Company homepage redirects, 2026-11-07
+
+Relative career links are resolved against the final homepage URL after a same-registrable-domain redirect. Redirects to a different registrable domain or from HTTPS to HTTP produce an attention warning instead of treating that page's links as company evidence. Controlled tests cover relative paths and cross-domain redirects. GPT-6 Luna (High) independently reviewed this change and found no concrete defect; it did not run tests. The implementer ran the PostgreSQL-backed race suite, vet and build. Public smoke coverage of this redirect behavior remains outstanding.

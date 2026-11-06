@@ -133,6 +133,14 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 	if err != nil {
 		return nil, err
 	}
+	base := home
+	if res.Request != nil && res.Request.URL != nil {
+		base = res.Request.URL
+	}
+	finalRoot, err := publicsuffix.EffectiveTLDPlusOne(base.Hostname())
+	if err != nil || finalRoot != root || base.User != nil || (base.Scheme != "https" && base.Scheme != "http") || (home.Scheme == "https" && base.Scheme != "https") {
+		return nil, errors.New("homepage redirected to an unverified origin")
+	}
 	out := []string{}
 	seen := map[string]bool{}
 	var walk func(*html.Node)
@@ -150,7 +158,7 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 			text := strings.ToLower(href + " " + nodeText(n))
 			ref, e := url.Parse(href)
 			if e == nil && href != "" {
-				u := home.ResolveReference(ref)
+				u := base.ResolveReference(ref)
 				domain, domainErr := publicsuffix.EffectiveTLDPlusOne(u.Hostname())
 				board := supportedCareerBoard(u)
 				if board {
