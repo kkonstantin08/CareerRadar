@@ -27,3 +27,14 @@ func TestPublicSourceSmoke(t *testing.T) {
 	}
 	t.Logf("first observation: %s", facts)
 }
+
+func TestPublicHabrArchiveSmoke(t *testing.T) {
+	source := os.Getenv("SMOKE_HABR_ARCHIVED_URL")
+	if source == "" {
+		t.Skip("SMOKE_HABR_ARCHIVED_URL not set")
+	}
+	got, err := Fetch(context.Background(), Client(), source)
+	if err != nil || len(got) != 1 || !got[0].Closed || got[0].URL != source || got[0].SourceURL != source {
+		t.Fatalf("archive=%+v err=%v", got, err)
+	}
+}

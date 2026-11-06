@@ -351,3 +351,47 @@ func TestAliasMigrationBlocksConflictingIDsWithinLegacyRow(t *testing.T) {
 		t.Fatalf("jobs=%+v err=%v", all, err)
 	}
 }
+
+func TestHabrArchiveClosureAndReopeningAreIdempotent(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	u := "https://career.habr.com/vacancies/1000061473"
+	src, err := db.AddSource(ctx, "Habr", u, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, Observation{SourceID: src.ID, URL: u, Title: "Engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		ok, err := db.ConfirmClosedURL(ctx, u, u)
+		if err != nil || !ok {
+			t.Fatalf("closed=%t err=%v", ok, err)
+		}
+	}
+	all, err := db.Jobs(ctx)
+	if err != nil || len(all) != 1 || !all[0].Closed {
+		t.Fatalf("jobs=%+v err=%v", all, err)
+	}
+	id := all[0].ID
+	if err = db.ReopenHabr(ctx, u, u); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenHabr(ctx, u, u); err != nil {
+		t.Fatal(err)
+	}
+	d, err := db.Details(ctx, id)
+	if err != nil || d.Job.Closed || len(d.History) != 3 {
+		t.Fatalf("details=%+v err=%v", d, err)
+	}
+	if err = db.ConfirmClosed(ctx, id, u); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ReopenHabr(ctx, u, u); err != nil {
+		t.Fatal(err)
+	}
+	d, err = db.Details(ctx, id)
+	if err != nil || !d.Job.Closed {
+		t.Fatalf("owner closure lost %+v err=%v", d, err)
+	}
+}

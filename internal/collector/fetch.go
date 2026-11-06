@@ -88,6 +88,17 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	var initialHabrPage []byte
+	if habrVacancyURL(root) {
+		archived, body, err := checkHabrArchive(ctx, client, root.String())
+		if err != nil {
+			return nil, err
+		}
+		if archived {
+			return []Job{{URL: root.String(), SourceURL: root.String(), Closed: true}}, nil
+		}
+		initialHabrPage = body
+	}
 	id := jobicyID(root)
 	if status != "" && id == "" {
 		return nil, errors.New("invalid Jobicy job URL")
@@ -183,7 +194,14 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 	for len(queue) > 0 && len(seen) <= 20 {
 		current := queue[0]
 		queue = queue[1:]
-		body, actual, err := readPage(ctx, client, current.url)
+		var body []byte
+		var actual string
+		var err error
+		if current.url == rawURL && initialHabrPage != nil {
+			body, actual = initialHabrPage, current.url
+		} else {
+			body, actual, err = readPage(ctx, client, current.url)
+		}
 		if err != nil {
 			problem = err
 			continue

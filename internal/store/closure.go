@@ -117,6 +117,8 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 		origin = "greenhouse"
 	} else if collector.LeverClosureEvidenceURL(jobURL) == evidence {
 		origin = "lever"
+	} else if collector.HabrArchiveEvidenceURL(jobURL) == evidence {
+		origin = "habr"
 	}
 	jobURL, err = storedAliasURL(ctx, s.db, jobURL, collector.PostingURL(jobURL))
 	if err != nil {
@@ -273,6 +275,14 @@ func (s *Store) ReopenLever(ctx context.Context, jobURL, evidence string) error 
 	return s.reopenSourceClosure(ctx, collector.LeverClosureEvidenceURL(jobURL), evidence, "lever")
 }
 
+// ReopenHabr reverses a closure previously established by the same Habr vacancy page.
+func (s *Store) ReopenHabr(ctx context.Context, jobURL, evidence string) error {
+	if expected := collector.HabrArchiveEvidenceURL(jobURL); expected == "" || expected != evidence {
+		return errors.New("invalid Habr reopening evidence")
+	}
+	return s.reopenSourceClosure(ctx, jobURL, evidence, "habr")
+}
+
 func (s *Store) reopenSourceClosure(ctx context.Context, jobURL, evidence, origin string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -332,7 +342,8 @@ func validateJobicyEvidence(jobURL, evidence string) error {
 func validateClosureEvidence(jobURL, evidence string) error {
 	greenhouseEvidence := collector.GreenhouseClosureEvidenceURL(jobURL)
 	leverEvidence := collector.LeverClosureEvidenceURL(jobURL)
-	if validateJobicyEvidence(jobURL, evidence) == nil || greenhouseEvidence != "" && greenhouseEvidence == evidence || leverEvidence != "" && leverEvidence == evidence {
+	habrEvidence := collector.HabrArchiveEvidenceURL(jobURL)
+	if validateJobicyEvidence(jobURL, evidence) == nil || greenhouseEvidence != "" && greenhouseEvidence == evidence || leverEvidence != "" && leverEvidence == evidence || habrEvidence != "" && habrEvidence == evidence {
 		return nil
 	}
 	return errors.New("invalid source closure evidence")

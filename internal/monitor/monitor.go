@@ -194,6 +194,11 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "" || job.LocationUncertain) {
 			problem = "Vacancy details require clarification"
 		}
+		if evidence := collector.HabrArchiveEvidenceURL(src.URL); evidence != "" && evidence == collector.HabrArchiveEvidenceURL(job.URL) && job.SourceURL == evidence && fetchErr == nil {
+			if err := s.db.ReopenHabr(ctx, job.URL, evidence); err != nil {
+				return "", err
+			}
+		}
 		if evidence := collector.GreenhouseClosureEvidenceURL(src.URL); evidence != "" && evidence == collector.GreenhouseClosureEvidenceURL(job.URL) {
 			if err := s.db.ReopenGreenhouse(ctx, job.URL, evidence); err != nil {
 				if errors.Is(err, store.ErrAmbiguousJobIdentity) {

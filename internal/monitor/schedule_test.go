@@ -247,7 +247,7 @@ func TestGreenhouseNotFoundClosesOnlyTheObservedJob(t *testing.T) {
 	}
 }
 
-func TestPublishedLeverAndGreenhouseListingsReopenSourceClosures(t *testing.T) {
+func TestPublishedProviderListingsReopenSourceClosures(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -287,6 +287,7 @@ func TestPublishedLeverAndGreenhouseListingsReopenSourceClosures(t *testing.T) {
 	}{
 		{"Lever", leverURL, leverURL},
 		{"Greenhouse", greenhouseURL, "https://boards-api.greenhouse.io/v1/boards/careerradar-test/jobs/123456789"},
+		{"Habr", "https://career.habr.com/vacancies/1000061473", "https://career.habr.com/vacancies/1000061473"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -307,7 +308,7 @@ func TestPublishedLeverAndGreenhouseListingsReopenSourceClosures(t *testing.T) {
 			}
 			defer sqlDB.ExecContext(ctx, `DELETE FROM notifications WHERE event_key LIKE $1 OR event_key LIKE $2`, fmt.Sprintf("closure:%d:%%", id), fmt.Sprintf("reopen:%d:%%", id))
 			service := New(db, func(context.Context, string) ([]collector.Job, error) {
-				return []collector.Job{{URL: tc.url, Title: "Go Engineer", Company: "Example", Deadline: "2027-01-01"}}, nil
+				return []collector.Job{{URL: tc.url, SourceURL: tc.url, Title: "Go Engineer", Company: "Example", Deadline: "2027-01-01"}}, nil
 			})
 			if problem, err := service.Check(ctx, source.ID); err != nil || problem != "" {
 				t.Fatalf("check: %q %v", problem, err)

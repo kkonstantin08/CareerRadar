@@ -11,3 +11,5 @@ Lever boards use the vendor's public XML postings feed without authentication. A
 When a closed individual Greenhouse source or a Lever board feed later publishes the same posting again, reopen it only if the closure origin matches that source. Owner-confirmed closures are never reversed automatically.
 
 Persist verified posting aliases in an additive table. Resolve aliases within the observation transaction and serialize these short writes with a database advisory lock to avoid alias lock-order cycles; network fetching remains concurrent. Existing conflicting cards are preserved for attention rather than merged destructively. Source closure and reopening resolve the same aliases after validating provider evidence.
+
+An individual Habr Career vacancy may close only on its exact unredirected HTTPS page when HTTP 200 or 410 contains the archive banner in the HTML DOM. A 410 without that banner, 404, access failure, redirect or missing search result is not closure evidence. A later active observation on that same source reopens only a Habr-confirmed closure.
