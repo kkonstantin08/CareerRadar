@@ -42,6 +42,54 @@ func TestParseJobPostingMicrodataFixture(t *testing.T) {
 	}
 }
 
+func TestMicrodataFollowsItemrefProperties(t *testing.T) {
+	f, err := os.Open("testdata/microdata-itemref.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	got, err := Parse(f, "https://example.org/jobs/go-backend")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("jobs %+v, err %v", got, err)
+	}
+	job := got[0]
+	if job.Title != "Go Engineer" || job.Company != "Example Engineering" || job.Hours == nil || *job.Hours != 20 || job.Deadline != "2026-12-01" {
+		t.Fatalf("itemref properties were not extracted: %+v", job)
+	}
+}
+
+func TestMicrodataDoesNotChooseBetweenDuplicateItemrefIDs(t *testing.T) {
+	body := `<article itemscope itemtype="https://schema.org/JobPosting" itemref="job-details"><h1 itemprop="title">Go Engineer</h1></article>` +
+		`<div id="job-details"><span itemprop="hiringOrganization">Company A</span></div>` +
+		`<div id="job-details"><span itemprop="hiringOrganization">Company B</span></div>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/jobs/go")
+	if err != nil || len(got) != 1 || got[0].Company != "" {
+		t.Fatalf("ambiguous itemref target was selected: %+v, err %v", got, err)
+	}
+}
+
+func TestMicrodataOrdersReferencedValuesByDocumentPosition(t *testing.T) {
+	body := `<div id="requirements"><span itemprop="qualifications">Earlier requirement</span></div>` +
+		`<article itemscope itemtype="https://schema.org/JobPosting" itemref="requirements"><h1 itemprop="title">Go Engineer</h1><span itemprop="qualifications">Later requirement</span></article>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/jobs/go")
+	want := "Qualifications: Earlier requirement; Later requirement"
+	if err != nil || len(got) != 1 || got[0].Description != want {
+		t.Fatalf("itemref values not in document order: %+v, err %v", got, err)
+	}
+}
+
+func TestMicrodataItemrefWorkIsBoundedAndReturnsPartialJobs(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`<html><body><div id="shared">`)
+	body.WriteString(strings.Repeat(`<i>x</i>`, 30000))
+	body.WriteString(`</div><article itemscope itemtype="https://schema.org/JobPosting" itemref="shared"><h1 itemprop="title">Go Engineer One</h1><a itemprop="url" href="/jobs/one">Details</a></article>`)
+	body.WriteString(`<article itemscope itemtype="https://schema.org/JobPosting" itemref="shared"><h1 itemprop="title">Go Engineer Two</h1><a itemprop="url" href="/jobs/two">Details</a></article></body></html>`)
+	got, err := Parse(strings.NewReader(body.String()), "https://example.org/careers")
+	if err == nil || len(got) != 2 || got[0].Title != "Go Engineer One" || got[1].Title != "Go Engineer Two" {
+		t.Fatalf("bounded parser did not return partial jobs: %+v, err %v", got, err)
+	}
+}
+
 func TestJSONLDPrecedesEquivalentMicrodata(t *testing.T) {
 	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"JSON-LD title"}</script>` +
 		`<article itemscope itemtype="https://schema.org/JobPosting"><h1 itemprop="title">Microdata title</h1></article>`

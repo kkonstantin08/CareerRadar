@@ -3,6 +3,7 @@ package collector
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/url"
@@ -45,6 +46,9 @@ var graduateProgramTitle = regexp.MustCompile(`(?i)\b(trainee|graduate\s+program
 var educationProgramTitle = regexp.MustCompile(`(?i)\b(?:boot\s?camp|educational\s+program(?:me)?|education\s+program(?:me)?)\b|(?:^|[^\pL\pN])(?:буткемп|образовательная\s+программа|обучающая\s+программа)(?:$|[^\pL\pN])`)
 var middleRole = regexp.MustCompile(`(?i)\bmiddle[\s-]+(?:(?:go|python|java|backend|frontend|fullstack|software|qa|devops)[\s-]+)?(?:developer|engineer|programmer)\b|(?:^|[^\pL\pN])мидл[\s-]+(?:(?:go|python|java|бэкенд|фронтенд|backend|frontend)[\s-]+)?(?:разработчик|инженер|программист|тестировщик|специалист)(?:$|[^\pL\pN])`)
 var mixedMiddle = regexp.MustCompile(`(?i)\bmiddle(?:\s*[-/|–—]\s*|\s+to\s+)(?:junior|senior)\b|(?:^|[^\pL\pN])мидл\s*[-/|–—]\s*(?:джун|сеньор)(?:$|[^\pL\pN])`)
+
+// shortcut: caps repeated itemref traversal per page; raise only when monitored pages routinely exceed this budget.
+const maxItemrefNodeVisits = 100_000
 
 // Parse extracts supported schema.org job and education program records from HTML without inferring facts.
 func Parse(r io.Reader, sourceURL string) ([]Job, error) {
@@ -211,11 +215,34 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 	}
 	walk(doc)
 	if len(result) == 0 {
+		byID := make(map[string]*html.Node)
+		treeOrder := make(map[*html.Node]int)
+		position := 0
+		var indexIDs func(*html.Node)
+		indexIDs = func(n *html.Node) {
+			treeOrder[n] = position
+			position++
+			if id := attribute(n, "id"); id != "" {
+				if _, exists := byID[id]; exists {
+					byID[id] = nil
+				} else {
+					byID[id] = n
+				}
+			}
+			for child := n.FirstChild; child != nil; child = child.NextSibling {
+				indexIDs(child)
+			}
+		}
+		indexIDs(doc)
+		itemrefVisits, itemrefLimitExceeded := 0, false
 		var walkMicrodata func(*html.Node)
 		walkMicrodata = func(n *html.Node) {
+			if itemrefLimitExceeded {
+				return
+			}
 			if n.Type == html.ElementNode && isOpportunityItem(n) {
 				// Prefer JSON-LD when a page publishes both formats to avoid duplicate observations.
-				if value := microdataItem(n); value != nil {
+				if value := microdataItem(n, byID, treeOrder, nil, &itemrefVisits, &itemrefLimitExceeded, false); value != nil {
 					extract(value)
 				}
 				return
@@ -225,6 +252,9 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 		}
 		walkMicrodata(doc)
+		if itemrefLimitExceeded {
+			return result, errors.New("Microdata itemref processing limit reached; source requires attention")
+		}
 	}
 	return result, nil
 }
@@ -255,8 +285,15 @@ func programWorkMode(value string) string {
 	}
 }
 
-// shortcut: itemref is not followed; support it if a real monitored page places Microdata properties outside their item scope.
-func microdataItem(n *html.Node) map[string]any {
+func microdataItem(n *html.Node, byID map[string]*html.Node, treeOrder map[*html.Node]int, parentPath map[*html.Node]bool, visits *int, limitExceeded *bool, referenced bool) map[string]any {
+	if parentPath[n] {
+		return map[string]any{"@type": schemaTypeName(attribute(n, "itemtype"))}
+	}
+	path := make(map[*html.Node]bool, len(parentPath)+1)
+	for item := range parentPath {
+		path[item] = true
+	}
+	path[n] = true
 	var typeName string
 	for _, raw := range strings.Fields(attribute(n, "itemtype")) {
 		name := schemaTypeName(raw)
@@ -266,37 +303,66 @@ func microdataItem(n *html.Node) map[string]any {
 		}
 	}
 	item := map[string]any{"@type": typeName}
-	properties := make(map[string][]any)
-	var collect func(*html.Node)
-	collect = func(parent *html.Node) {
-		for child := parent.FirstChild; child != nil; child = child.NextSibling {
-			if child.Type != html.ElementNode {
-				continue
+	type propertyValue struct {
+		name  string
+		order int
+		value any
+	}
+	var values []propertyValue
+	visited := make(map[*html.Node]bool)
+	var collect func(*html.Node, bool, bool)
+	collect = func(current *html.Node, root, inReference bool) {
+		if current == nil || visited[current] || inReference && *limitExceeded {
+			return
+		}
+		if inReference {
+			if *visits == maxItemrefNodeVisits {
+				*limitExceeded = true
+				return
 			}
-			if hasAttribute(child, "itemscope") {
-				if names := strings.Fields(attribute(child, "itemprop")); len(names) > 0 {
-					value := any(microdataItem(child))
-					for _, name := range names {
-						properties[name] = append(properties[name], value)
-					}
-				}
-				continue
-			}
-			if names := strings.Fields(attribute(child, "itemprop")); len(names) > 0 {
+			*visits++
+		}
+		visited[current] = true
+		if !root && hasAttribute(current, "itemscope") {
+			if names := strings.Fields(attribute(current, "itemprop")); len(names) > 0 {
+				value := any(microdataItem(current, byID, treeOrder, path, visits, limitExceeded, inReference))
 				for _, name := range names {
-					properties[name] = append(properties[name], microdataValue(child, name))
+					values = append(values, propertyValue{name, treeOrder[current], value})
 				}
-				continue
 			}
-			collect(child)
+			return
+		}
+		if !root {
+			if names := strings.Fields(attribute(current, "itemprop")); len(names) > 0 {
+				for _, name := range names {
+					values = append(values, propertyValue{name, treeOrder[current], microdataValue(current, name)})
+				}
+				return
+			}
+		}
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			collect(child, false, inReference)
 		}
 	}
-	collect(n)
-	for name, values := range properties {
-		if len(values) == 1 {
-			item[name] = values[0]
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		collect(child, false, referenced)
+	}
+	for _, id := range strings.Fields(attribute(n, "itemref")) {
+		if *limitExceeded {
+			break
+		}
+		collect(byID[id], false, true)
+	}
+	sort.SliceStable(values, func(i, j int) bool { return values[i].order < values[j].order })
+	properties := make(map[string][]any)
+	for _, value := range values {
+		properties[value.name] = append(properties[value.name], value.value)
+	}
+	for name, propertyValues := range properties {
+		if len(propertyValues) == 1 {
+			item[name] = propertyValues[0]
 		} else {
-			item[name] = values
+			item[name] = propertyValues
 		}
 	}
 	return item

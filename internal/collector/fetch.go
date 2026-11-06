@@ -191,7 +191,6 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 		extracted, err := Parse(bytes.NewReader(body), actual)
 		if err != nil {
 			problem = err
-			continue
 		}
 		if len(extracted) == 0 {
 			partial, ok, fallbackErr := parseHTMLJob(body, actual)

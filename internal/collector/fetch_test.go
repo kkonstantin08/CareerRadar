@@ -221,6 +221,24 @@ func TestFetchRetainsExplicitHTMLJobTitleWhenStructuredDataIsMissing(t *testing.
 	}
 }
 
+func TestFetchRetainsMicrodataJobsWhenItemrefWorkLimitIsReached(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`<html><body><div id="shared">`)
+	body.WriteString(strings.Repeat(`<i>x</i>`, 30000))
+	body.WriteString(`</div><article itemscope itemtype="https://schema.org/JobPosting" itemref="shared"><h1 itemprop="title">Go Engineer One</h1><a itemprop="url" href="https://careers.example/jobs/one">Details</a></article>`)
+	body.WriteString(`<article itemscope itemtype="https://schema.org/JobPosting" itemref="shared"><h1 itemprop="title">Go Engineer Two</h1><a itemprop="url" href="https://careers.example/jobs/two">Details</a></article></body></html>`)
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/jobs" {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body.String())), Header: make(http.Header), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://careers.example/jobs")
+	if err == nil || len(got) != 2 || got[0].Title != "Go Engineer One" || got[1].Title != "Go Engineer Two" {
+		t.Fatalf("fetch lost partial opportunities at itemref limit: %+v, err %v", got, err)
+	}
+}
+
 func TestFetchRetainsEducationalProgramAndApplyLink(t *testing.T) {
 	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		body := `<article itemscope itemtype="https://schema.org/EducationalOccupationalProgram"><h1 itemprop="name">Go Bootcamp</h1><span itemprop="provider" itemscope itemtype="https://schema.org/Organization"><span itemprop="name">Example Academy</span></span><a href="/apply">Apply now</a></article>`
