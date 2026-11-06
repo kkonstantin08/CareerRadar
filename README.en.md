@@ -59,7 +59,7 @@ Create a bot using Telegram's BotFather and provide its token through `TELEGRAM_
 
 If the cabinet is reachable from your phone through an HTTPS proxy you configured, set `CABINET_URL=https://your-host/`. The `/cabinet` command links to sections and `/jobs` links to job details. The application does not configure a proxy; these links are disabled when the variable is unset.
 
-Live Telegram delivery has not yet been verified in this environment; the token is not included in the repository.
+In this environment the owner confirmed linking, `/help`, `/sources`, `/jobs` and receipt of one vacancy notification. Other bot commands have not been verified live. The token is not included in the repository.
 
 ## API
 
