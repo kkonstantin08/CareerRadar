@@ -227,12 +227,11 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			for _, value := range values {
 				raw, _ := value.(string)
-				found := recognized(raw, []string{"Go", "Python", "Java", "JavaScript", "TypeScript", "C++", "C#", "Rust", "Kotlin", "Swift", "PHP", "Ruby"})
-				if found == "" {
-					continue
-				}
-				if !contains(languages, found) {
-					languages = append(languages, found)
+				for _, skill := range strings.Split(raw, ",") {
+					found := recognized(skill, []string{"Go", "Python", "Java", "JavaScript", "TypeScript", "C++", "C#", "Rust", "Kotlin", "Swift", "PHP", "Ruby"})
+					if found != "" && !contains(languages, found) {
+						languages = append(languages, found)
+					}
 				}
 			}
 			sort.Strings(languages)

@@ -458,3 +458,11 @@ func TestJobPostingInTypeArray(t *testing.T) {
 		t.Fatalf("jobs %+v %v", found, err)
 	}
 }
+
+func TestCommaSeparatedSkillsRetainExplicitLanguages(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","skills":"Go, Python, Docker, C++"}</script>`
+	found, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(found) != 1 || found[0].Language != "C++, Go, Python" {
+		t.Fatalf("jobs %+v %v", found, err)
+	}
+}
