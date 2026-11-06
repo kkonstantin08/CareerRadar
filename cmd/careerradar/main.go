@@ -22,6 +22,9 @@ type config struct{ databaseURL, username, password, address string }
 
 func configFromEnv() (config, error) {
 	c := config{databaseURL: os.Getenv("DATABASE_URL"), username: os.Getenv("APP_USER"), password: os.Getenv("APP_PASSWORD"), address: "127.0.0.1:8080"}
+	if address := os.Getenv("HTTP_ADDR"); address != "" {
+		c.address = address
+	}
 	if c.databaseURL == "" || c.username == "" || c.password == "" {
 		return c, errors.New("DATABASE_URL, APP_USER and APP_PASSWORD are required")
 	}

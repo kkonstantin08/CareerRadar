@@ -51,7 +51,7 @@ export APP_PASSWORD='replace-with-a-strong-password'
 go run ./cmd/careerradar
 ```
 
-The app creates its initial schema on startup and listens only on `127.0.0.1:8080`. Open [the local cabinet](http://127.0.0.1:8080/) and authenticate using `APP_USER` and `APP_PASSWORD`. HTTP Basic credentials must only travel over a trusted local connection or HTTPS; exposing the app requires a separately configured trusted HTTPS proxy.
+The app creates its initial schema on startup and defaults to `127.0.0.1:8080`. If the port is occupied, set `HTTP_ADDR`, for example `127.0.0.1:18080`, and use that address in browser and API requests. Open [the local cabinet](http://127.0.0.1:8080/) and authenticate using `APP_USER` and `APP_PASSWORD`. HTTP Basic credentials must only travel over a trusted local connection or HTTPS; exposing the app requires a separately configured trusted HTTPS proxy.
 
 ### Telegram
 

@@ -180,3 +180,10 @@ A real response for `Go internship` contained unrelated listings such as freelan
 A second defect hardcoded every saved discovered result to `Job` with an unknown level. Discovery now reuses the existing title classification rules for explicit Internship, Junior, Graduate and Education/Bootcamp labels; mixed levels remain unknown. PostgreSQL tests cover each label and repeated-save history idempotency.
 
 GPT-6 Luna (High) independently reviewed both fixes and found no remaining implementation defect. It confirmed that GET and POST share the relevance check, that filtering occurs before the 50-result cap, and that unchanged discoveries do not create history revisions. It did not edit or rerun tests. Search is deliberately bounded and uses literal substring matching; incidental substrings can match and separated query words are not semantic matches.
+
+
+## Configurable listener and live search integration, 2026-11-06
+
+A separate local service occupied port 8080 after the earlier CareerRadar process had stopped. `HTTP_ADDR` now optionally overrides the existing loopback default; configuration tests observed the custom-address failure before the change and now pass for both default and custom listeners. README and the environment example document this setting. CareerRadar runs locally at `127.0.0.1:18080` with credentials and bot token loaded from protected files outside the repository.
+
+An authenticated live `POST /api/discovery` for `Python` returned HTTP 200 and two relevant Remotive records. Both were saved in the dedicated application database; the catalog showed one, while the geography preference excluded the other. The Remotive source remained disabled. The visible Askable posting generated one notification with a clarification marker and primary link, acknowledged by Telegram's API. Manual confirmation of that particular notification is pending. This check used real provider data and the live linked bot; it did not add or activate a company monitoring source.
