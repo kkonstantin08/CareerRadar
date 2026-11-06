@@ -75,6 +75,8 @@ curl -u "$APP_USER:$APP_PASSWORD" -H 'Content-Type: application/json' \
   http://127.0.0.1:8080/api/sources
 ```
 
+`GET /api/jobs` returns 50 rows by default. Use `limit` (1–100), then pass the response's `X-Next-Cursor` value as `cursor` to continue. `X-Has-More: true` means more SQL-filtered rows remain to scan. A request processes up to 5,000 rows, then probes one more row to set this header; that row may not match saved preferences, so the next page may be empty and the web catalog lets you continue scanning.
+
 A newly added source is disabled. Confirm it with `PUT /api/sources/{id}` before calling `POST /api/sources/{id}/check`. Import a CSV with `name,url` columns, or a `SOURCES` export with `company,start_url` columns using `POST /api/sources/import` and `Content-Type: text/csv`. If the original Google spreadsheet is not directly accessible, export its `SOURCES` sheet to CSV and import it here; the application does not modify the spreadsheet.
 
 ## Tests

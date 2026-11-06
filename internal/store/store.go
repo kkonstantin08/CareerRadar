@@ -404,9 +404,11 @@ type JobFilters struct {
 	Locations  []string
 	Types      []string
 	WorkModes  []string
+	Limit      int
+	Cursor     int64
 }
 
-// JobsFiltered lists stored jobs matching the selected catalog filters, newest first.
+// JobsFiltered lists matching jobs in stable, descending insertion order.
 func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, error) {
 	args := []any{"%" + strings.TrimSpace(filter.Query) + "%"}
 	conditions := []string{"($1 = '%%' OR title ILIKE $1 OR company ILIKE $1)"}
@@ -440,7 +442,16 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 			conditions = append(conditions, fmt.Sprintf("%s<>'' AND lower(%s)=ANY($%d::text[])", item.column, item.column, position))
 		}
 	}
-	query := `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY updated_at DESC,id DESC`
+	if filter.Cursor > 0 {
+		args = append(args, filter.Cursor)
+		conditions = append(conditions, fmt.Sprintf("id<$%d", len(args)))
+	}
+	query := `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY id DESC`
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		limitPosition := len(args)
+		query += fmt.Sprintf(" LIMIT $%d", limitPosition)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

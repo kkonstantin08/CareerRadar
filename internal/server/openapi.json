@@ -313,11 +313,17 @@
           {"in":"query","name":"company","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
           {"in":"query","name":"location","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
           {"in":"query","name":"type","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
-          {"in":"query","name":"work_mode","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true}
+          {"in":"query","name":"work_mode","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"limit","schema":{"type":"integer","minimum":1,"maximum":100,"default":50},"description":"Page size"},
+          {"in":"query","name":"cursor","schema":{"type":"integer","format":"int64","minimum":1},"description":"Continue after the last raw catalog row scanned in X-Next-Cursor"}
         ],
         "responses": {
           "200": {
             "description": "Success",
+            "headers": {
+              "X-Has-More": {"schema":{"type":"boolean"},"description":"True when more SQL-filtered rows remain to scan; after processing 5,000 rows, a one-row probe checks for more, which may not match preferences"},
+              "X-Next-Cursor": {"schema":{"type":"integer","format":"int64"},"description":"Cursor for the next request; pass as the cursor query parameter"}
+            },
             "content": {
               "application/json": {
                 "schema": {

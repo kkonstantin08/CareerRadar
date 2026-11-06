@@ -324,11 +324,6 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 			http.Error(w, "invalid job filters", 400)
 			return
 		}
-		xs, err := db.JobsFiltered(r.Context(), filter)
-		if err != nil {
-			http.Error(w, "database error", 500)
-			return
-		}
 		p, err := db.Preferences(r.Context())
 		if err != nil {
 			http.Error(w, "database error", 500)
@@ -337,16 +332,53 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 		result := make([]struct {
 			store.Job
 			Match jobs.Match `json:"match"`
-		}, 0, len(xs))
-		for _, j := range xs {
-			match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
-			if match != jobs.Unsuitable {
-				result = append(result, struct {
-					store.Job
-					Match jobs.Match `json:"match"`
-				}{j, match})
+		}, 0, filter.Limit)
+		const scanLimit = 5000
+		nextCursor, scanned, hasMore := filter.Cursor, 0, false
+		for scanned < scanLimit {
+			batchSize := min(100, scanLimit-scanned)
+			batchFilter := filter
+			batchFilter.Cursor, batchFilter.Limit = nextCursor, batchSize
+			xs, err := db.JobsFiltered(r.Context(), batchFilter)
+			if err != nil {
+				http.Error(w, "database error", 500)
+				return
+			}
+			if len(xs) == 0 {
+				break
+			}
+			for _, j := range xs {
+				match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
+				if match != jobs.Unsuitable {
+					if len(result) == filter.Limit {
+						hasMore = true
+						break
+					}
+					result = append(result, struct {
+						store.Job
+						Match jobs.Match `json:"match"`
+					}{j, match})
+				}
+				nextCursor = j.ID
+				scanned++
+			}
+			if hasMore || len(xs) < batchSize {
+				break
 			}
 		}
+		// shortcut: process 5,000 raw rows then probe one; use persistent visible-result cursors if deeper scans become common.
+		if !hasMore && scanned == scanLimit {
+			probe := filter
+			probe.Cursor, probe.Limit = nextCursor, 1
+			remaining, err := db.JobsFiltered(r.Context(), probe)
+			if err != nil {
+				http.Error(w, "database error", 500)
+				return
+			}
+			hasMore = len(remaining) > 0
+		}
+		w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
+		w.Header().Set("X-Next-Cursor", strconv.FormatInt(nextCursor, 10))
 		writeJSON(w, 200, result)
 	})
 	mux.HandleFunc("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -486,7 +518,7 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 
 func jobFilters(r *http.Request) (store.JobFilters, bool) {
 	q := r.URL.Query()
-	filter := store.JobFilters{Query: strings.TrimSpace(q.Get("q"))}
+	filter := store.JobFilters{Query: strings.TrimSpace(q.Get("q")), Limit: 50}
 	if utf8.RuneCountInString(filter.Query) > 100 {
 		return store.JobFilters{}, false
 	}
@@ -510,6 +542,23 @@ func jobFilters(r *http.Request) (store.JobFilters, bool) {
 				*field.target = append(*field.target, value)
 			}
 		}
+	}
+	if len(q["limit"]) > 1 || len(q["cursor"]) > 1 {
+		return store.JobFilters{}, false
+	}
+	if values := q["limit"]; len(values) > 0 {
+		limit, err := strconv.Atoi(values[0])
+		if err != nil || limit < 1 || limit > 100 {
+			return store.JobFilters{}, false
+		}
+		filter.Limit = limit
+	}
+	if values := q["cursor"]; len(values) > 0 {
+		cursor, err := strconv.ParseInt(values[0], 10, 64)
+		if err != nil || cursor < 1 {
+			return store.JobFilters{}, false
+		}
+		filter.Cursor = cursor
 	}
 	return filter, true
 }

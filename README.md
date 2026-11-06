@@ -77,6 +77,8 @@ curl -u "$APP_USER:$APP_PASSWORD" -H 'Content-Type: application/json' \
   http://127.0.0.1:8080/api/sources
 ```
 
+`GET /api/jobs` returns 50 rows by default. Use `limit` (1–100), then pass the response's `X-Next-Cursor` value as `cursor` to continue. `X-Has-More: true` means more SQL-filtered rows remain to scan. A request processes up to 5,000 rows, then probes one more row to set this header; that row may not match saved preferences, so the next page may be empty and the cabinet lets you continue scanning.
+
 Новый источник выключен. Подтвердите его запросом `PUT /api/sources/{id}` перед вызовом `POST /api/sources/{id}/check`. Для импорта отправьте CSV с колонками `name,url` или экспорт листа `SOURCES` с колонками `company,start_url` на `POST /api/sources/import` с заголовком `Content-Type: text/csv`. Для импорта вашей Google-таблицы скачайте нужный лист в CSV и загрузите его через кабинет или API; Google OAuth не требуется, исходная таблица не изменяется.
 
 ## Тесты

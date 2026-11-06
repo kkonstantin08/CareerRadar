@@ -55,9 +55,9 @@ func TestAPIRequiresAuthenticationAndCreatesSources(t *testing.T) {
 }
 
 func TestJobFiltersAcceptRepeatedValuesAndBoundInput(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs?q=backend&level=Intern&level=Junior&language=Go", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?q=backend&level=Intern&level=Junior&language=Go&limit=50&cursor=100", nil)
 	filter, ok := jobFilters(req)
-	if !ok || filter.Query != "backend" || len(filter.Levels) != 2 || filter.Levels[1] != "Junior" || len(filter.Languages) != 1 || filter.Languages[0] != "Go" {
+	if !ok || filter.Query != "backend" || len(filter.Levels) != 2 || filter.Levels[1] != "Junior" || len(filter.Languages) != 1 || filter.Languages[0] != "Go" || filter.Limit != 50 || filter.Cursor != 100 {
 		t.Fatalf("filter = %+v, valid = %t", filter, ok)
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/jobs?q="+strings.Repeat("x", 101), nil)
@@ -67,6 +67,15 @@ func TestJobFiltersAcceptRepeatedValuesAndBoundInput(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/jobs?q="+url.QueryEscape(strings.Repeat("ю", 100)), nil)
 	if _, ok = jobFilters(req); !ok {
 		t.Fatal("rejected a 100-character Cyrillic search query")
+	}
+	defaultPage, ok := jobFilters(httptest.NewRequest(http.MethodGet, "/api/jobs", nil))
+	if !ok || defaultPage.Limit != 50 || defaultPage.Cursor != 0 {
+		t.Fatalf("default page = %+v, valid = %t", defaultPage, ok)
+	}
+	for _, query := range []string{"/api/jobs?limit=0", "/api/jobs?limit=101", "/api/jobs?cursor=-1", "/api/jobs?cursor=1&cursor=2"} {
+		if _, ok = jobFilters(httptest.NewRequest(http.MethodGet, query, nil)); ok {
+			t.Errorf("accepted invalid pagination query %q", query)
+		}
 	}
 }
 
@@ -81,8 +90,8 @@ func TestJobsEndpointAppliesCatalogFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	base := "https://catalog-api.example.org/filter-test"
-	company := "Catalog Filter Test"
+	base := fmt.Sprintf("https://catalog-api.example.org/filter-test-%d", time.Now().UnixNano())
+	company := fmt.Sprintf("Catalog Filter Test %d", time.Now().UnixNano())
 	source, err := db.AddSource(ctx, "Catalog API", base, false)
 	if err != nil {
 		t.Fatal(err)
@@ -90,21 +99,85 @@ func TestJobsEndpointAppliesCatalogFilters(t *testing.T) {
 	defer db.DeleteSource(ctx, source.ID)
 	for _, item := range []store.Observation{
 		{SourceID: source.ID, URL: base + "/1", Title: "Backend", Company: company, Direction: "Backend", Language: "Python, Go"},
-		{SourceID: source.ID, URL: base + "/2", Title: "QA", Company: company, Direction: "QA", Language: "Python"},
+		{SourceID: source.ID, URL: base + "/2", Title: "Backend second", Company: company, Direction: "Backend", Language: "Go"},
+		{SourceID: source.ID, URL: base + "/3", Title: "QA", Company: company, Direction: "QA", Language: "Python"},
 	} {
 		if _, err = db.Observe(ctx, item); err != nil {
 			t.Fatal(err)
 		}
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs?company="+url.QueryEscape(company)+"&direction=Backend&direction=Data+Engineering&language=Go", nil)
+	path := "/api/jobs?company=" + url.QueryEscape(company) + "&direction=Backend&direction=Data+Engineering&language=Go&limit=1"
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	var got []struct {
+		ID  int64  `json:"id"`
+		URL string `json:"url"`
+	}
+	if w.Code != http.StatusOK || w.Header().Get("X-Has-More") != "true" || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || w.Header().Get("X-Next-Cursor") == "" {
+		t.Fatalf("catalog response %d: %s", w.Code, w.Body.String())
+	}
+	firstURL := got[0].URL
+	cursor := w.Header().Get("X-Next-Cursor")
+	if _, err = db.Observe(context.Background(), store.Observation{SourceID: source.ID, URL: base + "/4", Title: "New matching row", Company: company, Direction: "Backend", Language: "Go"}); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, path+"&cursor="+cursor, nil)
+	req.SetBasicAuth("owner", "secret")
+	w = httptest.NewRecorder()
+	New(db, "owner", "secret").ServeHTTP(w, req)
+	got = nil
+	if w.Code != http.StatusOK || w.Header().Get("X-Has-More") != "false" || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || got[0].URL != base+"/1" || got[0].URL == firstURL || w.Header().Get("X-Next-Cursor") == "" {
+		t.Fatalf("second catalog page %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestJobsEndpointPaginatesAfterPreferenceFiltering(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	previous, err := db.Preferences(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.SavePreferences(context.Background(), previous) })
+	maxHours := 10
+	company := fmt.Sprintf("Pagination preference %d", time.Now().UnixNano())
+	if err = db.SavePreferences(ctx, jobs.Preferences{MaxHours: &maxHours}); err != nil {
+		t.Fatal(err)
+	}
+	base := "https://catalog-api.example.org/preference-page-" + url.QueryEscape(company)
+	source, err := db.AddSource(ctx, "Preference page", base, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.DeleteSource(context.Background(), source.ID) })
+	tooLong, short := 20, 5
+	for _, item := range []store.Observation{
+		{SourceID: source.ID, URL: base + "/unsuitable", Title: "Too many hours", Company: company, Hours: &tooLong},
+		{SourceID: source.ID, URL: base + "/suitable", Title: "Allowed hours", Company: company, Hours: &short},
+	} {
+		if _, err = db.Observe(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?company="+url.QueryEscape(company)+"&limit=1", nil)
 	req.SetBasicAuth("owner", "secret")
 	w := httptest.NewRecorder()
 	New(db, "owner", "secret").ServeHTTP(w, req)
 	var got []struct {
 		URL string `json:"url"`
 	}
-	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || got[0].URL != base+"/1" {
-		t.Fatalf("catalog response %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || w.Header().Get("X-Has-More") != "false" || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || got[0].URL != base+"/suitable" {
+		t.Fatalf("preference-filtered page %d, more=%s: %s", w.Code, w.Header().Get("X-Has-More"), w.Body.String())
 	}
 }
 
@@ -777,15 +850,30 @@ func TestOpenAPIDocumentsJobFields(t *testing.T) {
 	jobsPath := paths["/api/jobs"].(map[string]any)
 	list := jobsPath["get"].(map[string]any)
 	parameters := list["parameters"].([]any)
-	if len(parameters) != 8 {
-		t.Fatalf("catalog filter parameters = %d, want 8", len(parameters))
+	if len(parameters) != 10 {
+		t.Fatalf("catalog query parameters = %d, want 10", len(parameters))
 	}
-	for _, raw := range parameters[1:] {
+	for _, raw := range parameters[1:8] {
 		parameter := raw.(map[string]any)
 		schema := parameter["schema"].(map[string]any)
 		if schema["maxItems"] != float64(20) {
 			t.Errorf("%s maxItems = %v, want 20", parameter["name"], schema["maxItems"])
 		}
+	}
+	limit := parameters[8].(map[string]any)["schema"].(map[string]any)
+	if limit["default"] != float64(50) || limit["maximum"] != float64(100) {
+		t.Errorf("limit schema = %v", limit)
+	}
+	cursor := parameters[9].(map[string]any)["schema"].(map[string]any)
+	if cursor["minimum"] != float64(1) || cursor["format"] != "int64" {
+		t.Errorf("cursor schema = %v", cursor)
+	}
+	response := list["responses"].(map[string]any)["200"].(map[string]any)
+	if _, ok := response["headers"].(map[string]any)["X-Has-More"]; !ok {
+		t.Error("paginated response does not document X-Has-More")
+	}
+	if _, ok := response["headers"].(map[string]any)["X-Next-Cursor"]; !ok {
+		t.Error("paginated response does not document X-Next-Cursor")
 	}
 }
 
