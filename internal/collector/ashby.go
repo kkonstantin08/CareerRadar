@@ -138,7 +138,12 @@ func parseAshby(body []byte, source string) ([]Job, error) {
 					*minimum /= divisor
 				}
 				if maximum != nil {
+					// Round outward so fractional monthly pay cannot falsely pass a salary limit.
+					remainder := *maximum % divisor
 					*maximum /= divisor
+					if remainder != 0 {
+						*maximum += 1
+					}
 				}
 				if minimum != nil && maximum != nil && *minimum == *maximum {
 					j.Salary = minimum

@@ -657,6 +657,36 @@ func TestCompanyDiscoveryValidatesName(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAPIQueryCharacterBoundaries(t *testing.T) {
+	h := New(nil, "owner", "secret")
+	for _, length := range []int{1, 2, 100, 101} {
+		query := strings.Repeat("я", length)
+		for _, path := range []string{"/api/discovery", "/api/discovery/company", "POST"} {
+			var req *http.Request
+			if path == "POST" {
+				req = httptest.NewRequest(http.MethodPost, "/api/discovery", strings.NewReader(`{"query":" `+query+` "}`))
+				req.Header.Set("Content-Type", "application/json")
+			} else {
+				req = httptest.NewRequest(http.MethodGet, path+"?q="+url.QueryEscape(query), nil)
+			}
+			// Cancellation lets valid inputs reach discovery without accessing external sites.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			req = req.WithContext(ctx)
+			req.SetBasicAuth("owner", "secret")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			want := http.StatusBadRequest
+			if length >= 2 && length <= 100 {
+				want = http.StatusBadGateway
+			}
+			if w.Code != want {
+				t.Errorf("%s length %d: status %d, want %d", path, length, w.Code, want)
+			}
+		}
+	}
+}
+
 func TestPartialCheckRetainsFoundJobsAndWarning(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

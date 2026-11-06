@@ -58,7 +58,7 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 	})
 	mux.HandleFunc("GET /api/discovery/company", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.URL.Query().Get("q"))
-		if len(name) < 2 || len(name) > 100 {
+		if n := utf8.RuneCountInString(name); n < 2 || n > 100 {
 			http.Error(w, "invalid company name", 400)
 			return
 		}
@@ -73,7 +73,7 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 	})
 	mux.HandleFunc("GET /api/discovery", func(w http.ResponseWriter, r *http.Request) {
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		if len(query) < 2 || len(query) > 100 {
+		if n := utf8.RuneCountInString(query); n < 2 || n > 100 {
 			http.Error(w, "invalid search query", 400)
 			return
 		}
@@ -94,7 +94,9 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 		}
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		dec.DisallowUnknownFields()
-		if dec.Decode(&input) != nil || len(strings.TrimSpace(input.Query)) < 2 || len(input.Query) > 100 {
+		decodeErr := dec.Decode(&input)
+		input.Query = strings.TrimSpace(input.Query)
+		if n := utf8.RuneCountInString(input.Query); decodeErr != nil || n < 2 || n > 100 {
 			http.Error(w, "invalid search query", 400)
 			return
 		}

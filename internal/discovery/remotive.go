@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 )
@@ -26,8 +27,8 @@ type Result struct {
 // Search queries Remotive's public API and returns attributed links.
 func Search(ctx context.Context, client *http.Client, query string) ([]Result, error) {
 	query = strings.TrimSpace(query)
-	if len(query) < 2 || len(query) > 100 {
-		return nil, errors.New("search query must contain 2 to 100 bytes")
+	if n := utf8.RuneCountInString(query); n < 2 || n > 100 {
+		return nil, errors.New("search query must contain 2 to 100 characters")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://remotive.com/api/remote-jobs?search="+url.QueryEscape(query), nil)
 	if err != nil {

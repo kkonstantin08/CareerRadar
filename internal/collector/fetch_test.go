@@ -357,6 +357,20 @@ func TestAshbyIncompleteListingsPreserveValidJobs(t *testing.T) {
 	}
 }
 
+func TestAshbyAnnualSalaryKeepsFractionalMonthlyBounds(t *testing.T) {
+	for _, bounds := range []string{`"minValue":120001,"maxValue":120001`, `"maxValue":120001`, `"minValue":120001`} {
+		body := `{"jobs":[{"title":"Engineer","isListed":true,"jobUrl":"https://jobs.ashbyhq.com/example/1","compensation":{"summaryComponents":[{"compensationType":"Salary","interval":"1 YEAR","currencyCode":"RUB",` + bounds + `}]}}]}`
+		got, err := parseAshby([]byte(body), "https://jobs.ashbyhq.com/example")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("jobs %+v, err %v", got, err)
+		}
+		job := got[0]
+		if job.Salary != nil || strings.Contains(bounds, "minValue") && (job.SalaryMin == nil || *job.SalaryMin != 10000) || strings.Contains(bounds, "maxValue") && (job.SalaryMax == nil || *job.SalaryMax != 10001) {
+			t.Errorf("rounded annual bounds %s: %+v", bounds, job)
+		}
+	}
+}
+
 func TestAshbyRejectsUnsafeApplyURLWithoutLosingJob(t *testing.T) {
 	body := `{"jobs":[{"title":"Engineer","isListed":true,"jobUrl":"https://jobs.ashbyhq.com/example/1","applyUrl":"javascript:alert(1)"}]}`
 	got, err := parseAshby([]byte(body), "https://jobs.ashbyhq.com/example")

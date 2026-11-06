@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
@@ -24,7 +25,7 @@ type CompanyResult struct {
 // Company finds candidate company websites via Wikidata and proposes career links.
 func Company(ctx context.Context, client *http.Client, name string) ([]CompanyResult, error) {
 	name = strings.TrimSpace(name)
-	if len(name) < 2 || len(name) > 100 {
+	if n := utf8.RuneCountInString(name); n < 2 || n > 100 {
 		return nil, errors.New("invalid company name")
 	}
 	var search struct {
