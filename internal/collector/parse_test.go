@@ -466,3 +466,43 @@ func TestCommaSeparatedSkillsRetainExplicitLanguages(t *testing.T) {
 		t.Fatalf("jobs %+v %v", found, err)
 	}
 }
+
+func TestStructuredHTMLDescriptionAndRequirementsAreReadable(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","description":"<p>Build <strong>Go</strong> services &amp; APIs.</p>\u003cscript\u003eignore me\u003c/script\u003e","qualifications":"<p>SQL &amp; Python</p>"}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/jobs/1")
+	if err != nil || len(got) != 1 || got[0].Description != "Build Go services & APIs.\n\nQualifications: SQL & Python" {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}
+
+func TestStructuredPlainTextPreservesTechnicalSyntax(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","description":"Use List<T> generics\n\nBuild C++ tools & APIs"}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/jobs/1")
+	if err != nil || len(got) != 1 || got[0].Description != "Use List<T> generics\n\nBuild C++ tools & APIs" {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}
+
+func TestStructuredHTMLWithAmbiguousTagsPreservesOriginal(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","description":"<p>Use List<T> generics</p>"}</script>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/jobs/1")
+	if err != nil || len(got) != 1 || got[0].Description != "<p>Use List<T> generics</p>" {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}
+
+func TestStructuredPlainTextPreservesLiteralHTMLExamples(t *testing.T) {
+	for _, want := range []string{"Do not include <script> tags. Keep the rest.", "Use <p> tags for paragraphs", "<script> tags are forbidden"} {
+		if got := structuredText(want); got != want {
+			t.Errorf("got %q want %q", got, want)
+		}
+	}
+}
+
+func TestHabrMixedHTMLDescriptionRemainsReadable(t *testing.T) {
+	body := `<script type="application/ld+json">{"@type":"JobPosting","description":"Intro <h5>Requirements</h5><p>Go</p>"}</script>`
+	got, err := Parse(strings.NewReader(body), "https://career.habr.com/vacancies/1000000001")
+	if err != nil || len(got) != 1 || got[0].Description != "Intro Requirements Go" {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}

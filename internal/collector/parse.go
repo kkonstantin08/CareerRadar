@@ -124,9 +124,9 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			title := str("title")
 			deadline := str("validThrough")
-			description := str("description")
+			description := structuredText(str("description"))
 			if habrSource {
-				description = plainHTML(description)
+				description = plainHTML(str("description"))
 			}
 			// Keep known alternatives in history even when one location field cannot represent them safely.
 			if len(places) > 1 && len(locations) > 0 && (locationUncertain || len(locations) > 1) {
@@ -152,7 +152,7 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				}{{"Prerequisites", v["programPrerequisites"]}}
 			}
 			for _, requirement := range requirements {
-				value := schemaText(requirement.value)
+				value := structuredText(schemaText(requirement.value))
 				if value != "" && !strings.Contains(strings.ToLower(description), strings.ToLower(value)) {
 					description = strings.TrimSpace(description + "\n\n" + requirement.label + ": " + value)
 				}
@@ -461,6 +461,31 @@ func schemaTypeName(raw string) string {
 		return ""
 	}
 	return raw
+}
+
+var structuredTag = regexp.MustCompile(`(?i)</?([a-z][a-z0-9:-]*)\b[^>]*>`)
+
+// structuredText leaves ambiguous markup untouched to avoid discarding technical syntax.
+func structuredText(value string) string {
+	tags := structuredTag.FindAllStringSubmatch(value, -1)
+	if !strings.HasPrefix(strings.TrimSpace(value), "<") || !strings.HasSuffix(strings.TrimSpace(value), ">") {
+		return value
+	}
+	if len(tags) == 0 {
+		return value
+	}
+	for _, tag := range tags {
+		name := strings.ToLower(tag[1])
+		if name != "br" && !strings.Contains(strings.ToLower(value), "</"+name+">") {
+			return value
+		}
+		switch name {
+		case "p", "div", "span", "br", "ul", "ol", "li", "strong", "b", "em", "i", "a", "h1", "h2", "h3", "h4", "script", "style":
+		default:
+			return value
+		}
+	}
+	return plainHTML(value)
 }
 
 func schemaText(value any) string {
