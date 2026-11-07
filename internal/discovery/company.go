@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -166,7 +167,10 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 					u.RawQuery, u.Fragment, u.ForceQuery = "", "", false
 				}
 				named := strings.Contains(text, "career") || strings.Contains(text, "vacanc") || strings.Contains(text, "jobs") || strings.Contains(text, "ваканс") || strings.Contains(text, "карьер")
-				if ((domainErr == nil && domain == root && named) || board) && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && !seen[u.String()] {
+				label := strings.ToLower(strings.TrimSpace(nodeText(n)))
+				explicit := label == "careers" || label == "career" || label == "jobs" || label == "вакансии" || label == "карьера"
+				external := explicit && domainErr == nil && net.ParseIP(u.Hostname()) == nil && u.Scheme == "https" && strings.Split(domain, ".")[0] == strings.Split(root, ".")[0]
+				if ((domainErr == nil && domain == root && named) || board || external) && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && !seen[u.String()] {
 					seen[u.String()] = true
 					out = append(out, u.String())
 				}

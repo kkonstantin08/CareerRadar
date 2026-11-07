@@ -76,3 +76,14 @@ func TestCareerLinksRejectCrossDomainHomepageRedirect(t *testing.T) {
 		t.Fatalf("links=%v err=%v", links, err)
 	}
 }
+
+func TestCompanyProposesExplicitExternalCareerLink(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`<a href="https://github.careers/">Careers</a><a href="https://evil.example/jobs">About us</a><a href="http://untrusted.example/">Careers</a>`)), Request: r}, nil
+	})}
+	home, _ := url.Parse("https://github.com/")
+	got, err := careerLinks(context.Background(), client, home)
+	if err != nil || len(got) != 1 || got[0] != "https://github.careers/" {
+		t.Fatalf("links=%v err=%v", got, err)
+	}
+}
