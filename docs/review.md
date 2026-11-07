@@ -274,3 +274,7 @@ A further PostgreSQL-backed REST regression verifies that a CSV containing a val
 ## Structured description rendering, 2026-11-07
 
 Simple, bounded HTML fragments in structured descriptions and requirements are converted to plain text; ambiguous markup is retained rather than stripping technical notation. Habr retains its prior provider-specific HTML conversion. GPT-6 Luna (High) identified loss of literal `List<T>` and `<script>` examples and a Habr mixed-markup regression; controlled tests reproduce those cases and the implementation was adjusted. The reviewer did not run tests. The implementer ran the PostgreSQL-backed race suite, vet and build. Ambiguous HTML can remain visible, and normalizing previously saved descriptions can create a one-time change notification; real-site coverage of this change was not performed.
+
+## Public card smoke after description change, 2026-11-07
+
+The read-only public Habr smoke for vacancy `1000168365` succeeded once and returned one titled record with company, location and salary. Two separate attempts to assert the description and source URL timed out during TLS handshake; therefore they do not establish live verification of the changed generic structured-description conversion. No vacancy or source was saved by these checks.
