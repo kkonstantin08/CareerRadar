@@ -264,3 +264,7 @@ A real read-only check of `https://www.github.com/` followed its same-domain red
 ## Live company-discovery API check, 2026-11-07
 
 After restarting the local service from `dbafd7f`, an authenticated, read-only company search for GitHub returned two Wikidata candidates, each with the explicitly linked `github.careers` candidate and no reported homepage problem. The cabinet, jobs, sources and OpenAPI endpoints returned HTTP 200; the Telegram link remained present and no source was enabled. This check does not prove domain ownership or exercise monitoring of the candidate.
+
+## CSV import verification, 2026-11-07
+
+The Google spreadsheet CSV export returned HTTP 401 without authentication; its contents and current columns were not inspected or changed. In an isolated PostgreSQL schema, the REST integration tests passed for repeated `name,url` import and the documented `SOURCES` export fixture (`company,start_url`); imported sources remained disabled. This does not verify an export of the current private spreadsheet, which must be downloaded by its owner before import.
