@@ -278,3 +278,7 @@ Simple, bounded HTML fragments in structured descriptions and requirements are c
 ## Public card smoke after description change, 2026-11-07
 
 The read-only public Habr smoke for vacancy `1000168365` succeeded once and returned one titled record with company, location and salary. Two separate attempts to assert the description and source URL timed out during TLS handshake; therefore they do not establish live verification of the changed generic structured-description conversion. No vacancy or source was saved by these checks.
+
+## Local restart and public HTML parsing, 2026-11-07
+
+The local service was rebuilt from `093b497`; authenticated cabinet, jobs, sources and OpenAPI returned HTTP 200. The Telegram link remained present and no sources were enabled. A read-only public fetch of Habr vacancy `1000168365` was passed to the generic structured-data parser using a test source URL: it returned one description (2,350 characters) without literal `<p>` tags. This exercises real HTML with the generic parser, but is not a live test of a different provider or a persistence/notification test. No source or vacancy was added.
