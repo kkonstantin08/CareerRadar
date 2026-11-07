@@ -268,3 +268,5 @@ After restarting the local service from `dbafd7f`, an authenticated, read-only c
 ## CSV import verification, 2026-11-07
 
 The Google spreadsheet CSV export returned HTTP 401 without authentication; its contents and current columns were not inspected or changed. In an isolated PostgreSQL schema, the REST integration tests passed for repeated `name,url` import and the documented `SOURCES` export fixture (`company,start_url`); imported sources remained disabled. This does not verify an export of the current private spreadsheet, which must be downloaded by its owner before import.
+
+A further PostgreSQL-backed REST regression verifies that a CSV containing a valid row followed by an invalid URL adds neither row, and that reimporting an existing enabled URL does not rename or disable it. The implementer ran the full race suite, vet and build; the actual private spreadsheet was not imported.

@@ -1042,3 +1042,58 @@ func TestCatalogFiltersExplicitDirectionAndLanguage(t *testing.T) {
 		t.Fatalf("catalog %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestCSVImportPreservesExistingSourceAndRejectsPartialImport(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	suffix := fmt.Sprint(time.Now().UnixNano())
+	existingURL := "https://existing.example.org/" + suffix
+	newURL := "https://new.example.org/" + suffix
+	existing, err := db.AddSource(ctx, "Original", existingURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, existing.ID)
+	h := New(db, "owner", "secret")
+	send := func(body string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/sources/import", strings.NewReader(body))
+		req.SetBasicAuth("owner", "secret")
+		req.Header.Set("Content-Type", "text/csv")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+	if code := send("name,url\nNew," + newURL + "\nInvalid,not-a-url\n"); code != http.StatusBadRequest {
+		t.Fatalf("invalid import status=%d", code)
+	}
+	if code := send("name,url\nReplacement," + existingURL + "\n"); code != http.StatusOK {
+		t.Fatalf("duplicate import status=%d", code)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range sources {
+		if s.URL == newURL {
+			t.Fatal("invalid import partially inserted a source")
+		}
+		if s.URL == existingURL {
+			found = true
+			if s.Name != "Original" || !s.Enabled {
+				t.Fatalf("existing source changed: %+v", s)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("existing source disappeared")
+	}
+}
