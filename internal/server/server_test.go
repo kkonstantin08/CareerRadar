@@ -18,6 +18,7 @@ import (
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"github.com/kkonstantin08/CareerRadar/internal/monitor"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
+	"github.com/kkonstantin08/CareerRadar/internal/telegram"
 )
 
 func TestAPIRequiresAuthenticationAndCreatesSources(t *testing.T) {
@@ -1095,5 +1096,78 @@ func TestCSVImportPreservesExistingSourceAndRejectsPartialImport(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("existing source disappeared")
+	}
+}
+
+func TestTelegramAndWebShareApplicationStatus(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("status_sync_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	source, err := db.AddSource(ctx, "Example", "https://example.org/careers", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Observe(ctx, store.Observation{SourceID: source.ID, URL: "https://example.org/jobs/1", Title: "Engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := db.Jobs(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("jobs=%+v err=%v", list, err)
+	}
+	id := list[0].ID
+	code, err := db.NewLinkCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.LinkTelegram(ctx, code, 123); err != nil {
+		t.Fatal(err)
+	}
+	h := New(db, "owner", "secret")
+	bot := telegram.New(db)
+	if _, err = db.ApplyTelegramStatus(ctx, 100, 123, id, "Откликнулся"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs/%d", id), nil)
+	req.SetBasicAuth("owner", "secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Откликнулся") {
+		t.Fatalf("web %d %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/jobs/%d/status", id), strings.NewReader(`{"status":"Собеседование"}`))
+	req.SetBasicAuth("owner", "secret")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("update %d %s", w.Code, w.Body.String())
+	}
+	reply := bot.Handle(ctx, telegram.Message{ChatID: 123, UserID: 123, ChatType: "private", Text: "/jobs"})
+	if !strings.Contains(reply, "Собеседование") {
+		t.Fatalf("telegram reply %q", reply)
 	}
 }
