@@ -95,12 +95,13 @@ export TEST_DATABASE_URL='postgres://localhost:5432/careerradar_test?sslmode=dis
 go test -race -count=1 ./...
 ```
 
-Optional live smoke tests require network access and are excluded by default:
+Optional live smoke tests require network access and are excluded by default. The monitor smoke uses a temporary schema in the test database; the public vacancy may change or become unavailable:
 
 ```sh
 SMOKE_COMPANY=Cloudflare go test ./internal/discovery -run TestPublicCompanySmoke -v
 SMOKE_SOURCE_URL='https://boards.greenhouse.io/COMPANY/jobs/JOB_ID' go test ./internal/collector -run TestPublicSourceSmoke -v
 SMOKE_SOURCE_URL='https://jobs.lever.co/xmlexample' go test ./internal/collector -run TestPublicSourceSmoke -v
+SMOKE_MONITOR_URL='https://career.habr.com/vacancies/1000168365' go test ./internal/monitor -run TestPublicMonitorSmoke -count=1 -v
 ```
 
 ## Known limitations

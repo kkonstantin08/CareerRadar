@@ -312,3 +312,7 @@ The sources section no longer renders a duplicate vacancy-pagination button. In 
 ## Local Telegram warning transport, 2026-11-08
 
 An isolated PostgreSQL integration test links a test chat, records the same source warning twice, claims the queued notification, posts it to a local Telegram API stub using the production send function, records confirmation and verifies no second warning remains. The implementer ran the full race suite, vet and build. This test calls the outbox and send primitives directly; it does not exercise the `Deliver` ticker loop or real Telegram delivery.
+
+## Public source through monitor and PostgreSQL, 2026-11-08
+
+An opt-in smoke test checked Habr vacancy `1000168365` twice through the actual collector, monitor and a disposable PostgreSQL schema. One open vacancy was persisted; the second check added no history revisions or notifications. The schema was removed after the test and no owner's data or Telegram was used. The public page may later change or become unavailable. The implementer also ran the full PostgreSQL-backed race suite, vet and build.
