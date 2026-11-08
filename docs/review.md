@@ -308,3 +308,7 @@ A temporary local instance with dummy Basic credentials and an isolated PostgreS
 ## Catalog pagination button, 2026-11-08
 
 The sources section no longer renders a duplicate vacancy-pagination button. In an isolated local instance with 51 test vacancies, the browser reproduced the duplicate before the fix; after the fix it was absent from sources and the catalog's button loaded the 51st vacancy. The temporary database schema and process were removed. GPT-6 Luna (High) reviewed the diff and found no concrete issue; it did not run tests. The implementer ran the PostgreSQL-backed race suite, vet, build and JavaScript syntax check. No automated browser regression was added.
+
+## Local Telegram warning transport, 2026-11-08
+
+An isolated PostgreSQL integration test links a test chat, records the same source warning twice, claims the queued notification, posts it to a local Telegram API stub using the production send function, records confirmation and verifies no second warning remains. The implementer ran the full race suite, vet and build. This test calls the outbox and send primitives directly; it does not exercise the `Deliver` ticker loop or real Telegram delivery.

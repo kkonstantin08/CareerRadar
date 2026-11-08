@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,5 +88,84 @@ func TestPollPersistsLinkAndReplyAcrossRestart(t *testing.T) {
 	var message, state string
 	if err = check.QueryRowContext(ctx, `SELECT message,state FROM notifications WHERE event_key='telegram-reply:42'`).Scan(&message, &state); err != nil || message != "Telegram подключён." || state != "pending" {
 		t.Fatalf("reply %q %q %v", message, state, err)
+	}
+}
+
+func TestSourceWarningDeliveredOnceThroughOutbox(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgwarning_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	code, err := db.NewLinkCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.LinkTelegram(ctx, code, 123); err != nil {
+		t.Fatal(err)
+	}
+	source, err := db.AddSource(ctx, "Example", "https://example.org/careers", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = db.RecordCheck(ctx, source.ID, "job page has no extractable vacancy; source requires attention"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	received := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/botTEST/sendMessage" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		var payload struct {
+			ChatID int64  `json:"chat_id"`
+			Text   string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if payload.ChatID != 123 || !strings.Contains(payload.Text, "Требует внимания") || !strings.Contains(payload.Text, source.URL) {
+			t.Errorf("payload=%+v", payload)
+		}
+		received++
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	id, attempt, chat, message, err := db.ClaimNextNotification(ctx)
+	if err != nil || id == 0 {
+		t.Fatalf("claim id=%d err=%v", id, err)
+	}
+	if !send(ctx, srv.Client(), srv.URL, "TEST", chat, message) {
+		t.Fatal("delivery failed")
+	}
+	if err = db.FinishNotification(ctx, id, attempt, true); err != nil {
+		t.Fatal(err)
+	}
+	id, _, _, _, err = db.ClaimNextNotification(ctx)
+	if err != nil || id != 0 || received != 1 {
+		t.Fatalf("next id=%d received=%d err=%v", id, received, err)
 	}
 }
