@@ -226,6 +226,9 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			problem = err
 			continue
 		}
+		if len(extracted) == 0 && likelyJobDetail(pageURL) && problem == nil {
+			problem = errors.New("job page has no extractable vacancy; source requires attention")
+		}
 		for _, j := range extracted {
 			jobPage := pageURL
 			if j.URL == "" {
@@ -382,6 +385,21 @@ func habrVacancyURL(u *url.URL) bool {
 	}
 	id, err := strconv.ParseUint(parts[1], 10, 53)
 	return err == nil && id > 0 && strconv.FormatUint(id, 10) == parts[1]
+}
+
+// likelyJobDetail excludes common listing routes from conservative page warnings.
+func likelyJobDetail(u *url.URL) bool {
+	if !individualJobURL(u) {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for _, part := range parts {
+		switch strings.ToLower(part) {
+		case "search", "archive", "archives", "list", "all":
+			return false
+		}
+	}
+	return true
 }
 
 func individualJobURL(u *url.URL) bool {

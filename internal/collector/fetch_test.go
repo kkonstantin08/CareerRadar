@@ -691,3 +691,41 @@ func TestRedirectCannotBypassJobicyThrottle(t *testing.T) {
 		t.Fatal("unthrottled redirect into Jobicy accepted")
 	}
 }
+
+func TestFetchWarnsWhenOneLinkedJobPageIsEmpty(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `<a href="/jobs/good">Good job</a><a href="/jobs/empty">Empty job</a>`
+		if r.URL.Path == "/jobs/good" {
+			body = `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer"}</script>`
+		}
+		if r.URL.Path == "/jobs/empty" {
+			body = `<html><body></body></html>`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	got, err := Fetch(context.Background(), client, "https://example.org/careers")
+	if len(got) != 1 || got[0].Title != "Go Engineer" || err == nil {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}
+
+func TestFetchDoesNotTreatEmptySearchPageAsJob(t *testing.T) {
+	for _, path := range []string{"/jobs/search", "/jobs/search/results", "/jobs/archive", "/jobs/archives", "/jobs/list", "/jobs/all"} {
+		t.Run(path, func(t *testing.T) {
+			client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				body := `<a href="/jobs/good">Good job</a><a href="` + path + `">Search jobs</a>`
+				if r.URL.Path == "/jobs/good" {
+					body = `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer"}</script>`
+				}
+				if r.URL.Path == path {
+					body = `<html><body></body></html>`
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})}
+			got, err := Fetch(context.Background(), client, "https://example.org/careers")
+			if len(got) != 1 || err != nil {
+				t.Fatalf("jobs=%+v err=%v", got, err)
+			}
+		})
+	}
+}

@@ -286,3 +286,7 @@ The local service was rebuilt from `093b497`; authenticated cabinet, jobs, sourc
 ## Cancellation while monitoring waits, 2026-11-08
 
 Concurrent checks of the same source and shared Jobicy batch lookups now use context-aware gates; a canceled waiter returns without waiting for the running check or batch. GPT-6 Luna (High) reviewed the change and found two test weaknesses: cancellation happened before waiting, and an early first-check failure could hang the test. Both were addressed; a subsequent review noted a scheduling ambiguity, removed by signaling when the waiting call observes the context's Done channel. The reviewer did not run tests. The implementer ran the full PostgreSQL-backed race suite, vet and build. This does not add cross-instance serialization of closure state.
+
+## Empty linked vacancy pages, 2026-11-08
+
+When a crawl finds some vacancies but another likely individual job page yields no extractable record, the collector retains the found records and reports an attention-worthy partial check. Common search and archive routes are excluded from this warning. GPT-6 Luna (High) reviewed the initial change, identified false warnings on search/archive paths, and noted that other listing URL patterns such as `/jobs/remote` may still be classified as job details. The implementer added exclusions and local regressions and ran the full PostgreSQL-backed race suite, vet and build. The classification is heuristic and can still produce false attention warnings; it does not close or delete vacancies.
