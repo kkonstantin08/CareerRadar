@@ -189,3 +189,16 @@ func TestCareerLinkDedupPreservesMeaningfulParametersAndFragments(t *testing.T) 
 		t.Fatalf("links=%v error=%v", got, err)
 	}
 }
+
+func TestCompanyRetainsCandidateWhenDetailsUnavailable(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("action") == "wbsearchentities" {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"search":[{"id":"Q1","label":"Example"}]}`)), Request: r}, nil
+		}
+		return &http.Response{StatusCode: 503, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("unavailable")), Request: r}, nil
+	})}
+	got, err := Company(context.Background(), client, "Example")
+	if err != nil || len(got) != 1 || got[0].Name != "Example" || got[0].Problem == "" || len(got[0].CareerURLs) != 0 {
+		t.Fatalf("results=%+v error=%v", got, err)
+	}
+}

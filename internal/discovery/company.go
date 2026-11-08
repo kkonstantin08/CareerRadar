@@ -79,6 +79,7 @@ func Company(ctx context.Context, client *http.Client, name string) ([]CompanyRe
 			} `json:"entities"`
 		}
 		if err := getJSON(ctx, client, "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=claims&ids="+id, &detail); err != nil {
+			out = append(out, CompanyResult{Name: candidate.Label, CareerURLs: []string{}, Problem: "Не удалось получить сведения о компании"})
 			continue
 		}
 		claims := detail.Entities[id].Claims.Website

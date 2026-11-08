@@ -6,12 +6,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
+	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"github.com/kkonstantin08/CareerRadar/internal/monitor"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 type links interface {
@@ -27,9 +31,10 @@ type Message struct {
 
 // Bot handles messages from the linked owner.
 type Bot struct {
-	links      links
-	check      func(context.Context, int64) (string, error)
-	cabinetURL string
+	links       links
+	check       func(context.Context, int64) (string, error)
+	findCompany func(context.Context, string) ([]discovery.CompanyResult, error)
+	cabinetURL  string
 }
 
 type dataStore interface {
@@ -64,7 +69,10 @@ func New(l interface {
 	LinkTelegram(context.Context, string, int64) error
 	TelegramChat(context.Context) (int64, error)
 }) *Bot {
-	return &Bot{links: l}
+	client := collector.Client()
+	return &Bot{links: l, findCompany: func(ctx context.Context, name string) ([]discovery.CompanyResult, error) {
+		return discovery.Company(ctx, client, name)
+	}}
 }
 
 // Handle accepts a linking code only in a private chat and ignores other users.
@@ -101,7 +109,63 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		return "", nil
 	}
 	if parts[0] == "/help" || parts[0] == "/start" {
-		return "Команды: /jobs, /sources, /cabinet, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+		return "Команды: /jobs, /sources, /cabinet, /find название компании, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+	}
+	if parts[0] == "/find" {
+		name := strings.TrimSpace(strings.TrimPrefix(m.Text, "/find"))
+		if n := utf8.RuneCountInString(name); n < 2 || n > 100 {
+			return "Используйте /find название компании (от 2 до 100 символов).", nil
+		}
+		if b.findCompany == nil {
+			return "Поиск компании недоступен.", nil
+		}
+		searchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		results, err := b.findCompany(searchCtx, name)
+		if err != nil {
+			return "Не удалось найти карьерные страницы; повторите попытку позже.", nil
+		}
+		if len(results) == 0 {
+			return "Компания не найдена.", nil
+		}
+		var out strings.Builder
+		out.WriteString("Проверьте найденные ссылки. Источники не включены.\n")
+		appendLine := func(line string) bool {
+			if out.Len()+len(line) > 2800 {
+				return false
+			}
+			out.WriteString(line)
+			return true
+		}
+		shortened := false
+		for _, result := range results {
+			if !appendLine(result.Name + " · " + result.Homepage + "\n") {
+				shortened = true
+				break
+			}
+			if result.Problem != "" && !appendLine("Требует внимания: "+result.Problem+"\n") {
+				shortened = true
+				break
+			}
+			if len(result.CareerURLs) == 0 && !appendLine("Карьерные ссылки не найдены.\n") {
+				shortened = true
+				break
+			}
+			for _, link := range result.CareerURLs {
+				if !appendLine(link + "\n") {
+					shortened = true
+					break
+				}
+			}
+			if shortened {
+				break
+			}
+		}
+		if shortened {
+			out.WriteString("Результаты сокращены; повторите поиск компании в кабинете.\n")
+		}
+		out.WriteString("Чтобы добавить: /add URL название, затем /confirm ID.")
+		return out.String(), nil
 	}
 	if parts[0] == "/cabinet" {
 		if b.cabinetURL == "" {

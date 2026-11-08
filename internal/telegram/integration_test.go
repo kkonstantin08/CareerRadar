@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
 )
 
@@ -167,5 +168,76 @@ func TestSourceWarningDeliveredOnceThroughOutbox(t *testing.T) {
 	id, _, _, _, err = db.ClaimNextNotification(ctx)
 	if err != nil || id != 0 || received != 1 {
 		t.Fatalf("next id=%d received=%d err=%v", id, received, err)
+	}
+}
+
+func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgfind_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	code, err := db.NewLinkCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.LinkTelegram(ctx, code, 123); err != nil {
+		t.Fatal(err)
+	}
+	bot := New(db)
+	bot.findCompany = func(context.Context, string) ([]discovery.CompanyResult, error) {
+		return []discovery.CompanyResult{{Name: "Example", Homepage: "https://example.org", CareerURLs: []string{"https://example.org/careers"}}}, nil
+	}
+	pollCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/botTEST/getUpdates" {
+			t.Errorf("unexpected direct send: %s", r.URL.Path)
+			return
+		}
+		calls++
+		if calls > 1 {
+			cancel()
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{map[string]any{"update_id": 42, "message": map[string]any{"chat": map[string]any{"id": 123, "type": "private"}, "from": map[string]any{"id": 123}, "text": "/find Example"}}}})
+	}))
+	defer srv.Close()
+	bot.poll(pollCtx, srv.Client(), srv.URL, "TEST")
+	check, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	var message, state string
+	if err = check.QueryRowContext(ctx, `SELECT message,state FROM notifications WHERE event_key='telegram-reply:42'`).Scan(&message, &state); err != nil || state != "pending" || !strings.Contains(message, "https://example.org/careers") {
+		t.Fatalf("reply=%q state=%q error=%v", message, state, err)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil || len(sources) != 0 {
+		t.Fatalf("sources=%+v error=%v", sources, err)
 	}
 }

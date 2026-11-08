@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/jobs"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
 	"io"
@@ -557,5 +559,68 @@ func TestMissingStatusTargetIsAcknowledgedWithoutRetry(t *testing.T) {
 	handled, _, err := b.atomicStatus(context.Background(), 88, Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/status 7 2"})
 	if err != nil || !handled || !f.recorded {
 		t.Fatalf("handled %t recorded %t error %v", handled, f.recorded, err)
+	}
+}
+
+func TestOwnerCanFindCompanyWithoutActivatingSource(t *testing.T) {
+	f := &fakeData{fakeLinks: fakeLinks{linked: 5}}
+	b := New(f)
+	calls := 0
+	b.findCompany = func(_ context.Context, name string) ([]discovery.CompanyResult, error) {
+		calls++
+		if name != "Example Company" {
+			t.Errorf("name=%q", name)
+		}
+		return []discovery.CompanyResult{{Name: "Example", Homepage: "https://example.org", CareerURLs: []string{"https://example.org/careers"}, Problem: "Список неполный"}}, nil
+	}
+	unauthorized := b.Handle(context.Background(), Message{ChatID: 6, UserID: 6, ChatType: "private", Text: "/find Example Company"})
+	if unauthorized != "" || calls != 0 {
+		t.Fatalf("unauthorized reply=%q calls=%d", unauthorized, calls)
+	}
+	reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/find Example Company"})
+	if calls != 1 || !strings.Contains(reply, "https://example.org/careers") || !strings.Contains(reply, "Список неполный") || !strings.Contains(reply, "/add") || f.updated {
+		t.Fatalf("reply=%q calls=%d", reply, calls)
+	}
+}
+
+func TestCompanySearchHandlesInvalidNamesAndFailures(t *testing.T) {
+	f := &fakeData{fakeLinks: fakeLinks{linked: 5}}
+	b := New(f)
+	calls := 0
+	b.findCompany = func(ctx context.Context, name string) ([]discovery.CompanyResult, error) {
+		calls++
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("search context has no deadline")
+		}
+		return nil, errors.New("unavailable")
+	}
+	for _, input := range []string{"/find", "/find я", "/find " + strings.Repeat("я", 101)} {
+		reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: input})
+		if !strings.Contains(reply, "Используйте /find") {
+			t.Fatalf("input=%q reply=%q", input, reply)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("invalid names triggered %d searches", calls)
+	}
+	reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/find Пример"})
+	if calls != 1 || !strings.Contains(reply, "Не удалось") {
+		t.Fatalf("calls=%d reply=%q", calls, reply)
+	}
+}
+
+func TestCompanySearchShowsLinksBeforeMessageLimit(t *testing.T) {
+	f := &fakeData{fakeLinks: fakeLinks{linked: 5}}
+	b := New(f)
+	b.findCompany = func(context.Context, string) ([]discovery.CompanyResult, error) {
+		links := make([]string, 20)
+		for i := range links {
+			links[i] = fmt.Sprintf("https://example.org/jobs/%02d/%s", i, strings.Repeat("x", 160))
+		}
+		return []discovery.CompanyResult{{Name: "Example", Homepage: "https://example.org", CareerURLs: links}}, nil
+	}
+	reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/find Example"})
+	if !strings.Contains(reply, "https://example.org/jobs/00/") || !strings.Contains(reply, "сокращены") || len(reply) > 4096 {
+		t.Fatalf("reply=%q length=%d", reply, len(reply))
 	}
 }

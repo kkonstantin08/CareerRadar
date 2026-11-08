@@ -15,3 +15,5 @@ Global discovery uses public Habr Career RSS search independently of monitored s
 Individual Habr vacancy cards use JobPosting JSON-LD. Normalize that provider's city Text labels and modern ruble RUR label; do not apply these source-specific assumptions to arbitrary sites. Preserve known alternative locations in revision descriptions, flag ambiguous locations for attention, and stop related-vacancy traversal on an individual Habr card.
 
 Global search may apply verified Habr archive evidence only to an already saved vacancy. Unknown archived listings are not created; incomplete checks do not reopen a vacancy and owner closures remain intact. Discovery does not enable source monitoring.
+
+Telegram `/find <company name>` uses the shared company discovery logic, displays candidate career links and incomplete-search warnings, and never creates or enables a source. Adding and confirming a candidate remains explicit.
