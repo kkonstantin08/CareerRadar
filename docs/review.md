@@ -296,3 +296,7 @@ A PostgreSQL-backed monitor integration test exercises the complete partial-craw
 ## Telegram and web status synchronization, 2026-11-08
 
 A PostgreSQL integration test links a private chat in an isolated schema, applies a Telegram status through the transactional store method and verifies it through authenticated REST, then updates the status through REST and checks the bot's `/jobs` response. The implementer ran the full race suite, vet and build. The test invokes the bot handler and store directly; it does not exercise Telegram's network transport or deliver a real message.
+
+## Local service restart, 2026-11-08
+
+The local service was not listening when checked and was started from code at `0f9ef11`. Authenticated HTTP checks returned 200 for the cabinet, jobs, sources and OpenAPI. One Telegram link and zero enabled sources were present. The in-app browser could not complete HTTP Basic authentication (`ERR_INVALID_AUTH_CREDENTIALS`), so this is not a visual or interactive UI acceptance check.
