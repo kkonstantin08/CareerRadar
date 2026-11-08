@@ -892,3 +892,173 @@ func TestConcurrentSourcesDoNotOverwriteNewerObservation(t *testing.T) {
 		t.Fatalf("stale observation overwrote newer result: %+v", jobs)
 	}
 }
+
+type observedCancellation struct {
+	context.Context
+	waiting chan struct{}
+}
+
+func (c observedCancellation) Done() <-chan struct{} {
+	select {
+	case c.waiting <- struct{}{}:
+	default:
+	}
+	return c.Context.Done()
+}
+
+func TestConcurrentSameSourceCheckHonorsCancellation(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	source, err := db.AddSource(ctx, "Cancellation", fmt.Sprintf("https://cancel.example/%d", time.Now().UnixNano()), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DeleteSource(ctx, source.ID)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	svc := New(db, func(context.Context, string) ([]collector.Job, error) {
+		close(entered)
+		<-release
+		return nil, errors.New("unavailable")
+	})
+	first := make(chan error, 1)
+	go func() { _, err := svc.Check(ctx, source.ID); first <- err }()
+	select {
+	case <-entered:
+	case err := <-first:
+		t.Fatalf("first check failed before fetch: %v", err)
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("first check did not reach fetch")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	defer cancel()
+	second := make(chan error, 1)
+	waiting := make(chan struct{}, 1)
+	go func() { _, err := svc.Check(observedCancellation{cancelled, waiting}, source.ID); second <- err }()
+	select {
+	case <-waiting:
+	case err := <-second:
+		close(release)
+		<-first
+		t.Fatalf("check did not wait: %v", err)
+	case <-time.After(3 * time.Second):
+		close(release)
+		<-first
+		t.Fatal("check did not reach cancellation wait")
+	}
+	cancel()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			close(release)
+			<-first
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-first
+		<-second
+		t.Fatal("cancelled check waited for prior source check")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJobicyBatchWaitHonorsCancellation(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("cancel_jobicy_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	svc := New(db, nil)
+	svc.SetJobicyBatch(func(context.Context, []string) (map[string]string, error) {
+		close(entered)
+		<-release
+		return map[string]string{}, nil
+	}, nil)
+	first := make(chan error, 1)
+	go func() {
+		_, err := svc.jobicyStatus(ctx, "101", []store.Source{{URL: "https://jobicy.com/jobs/101-test", Enabled: true}})
+		first <- err
+	}()
+	select {
+	case <-entered:
+	case err := <-first:
+		t.Fatalf("first check failed before fetch: %v", err)
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("first check did not reach fetch")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	defer cancel()
+	second := make(chan error, 1)
+	waiting := make(chan struct{}, 1)
+	go func() {
+		_, err := svc.jobicyStatus(observedCancellation{cancelled, waiting}, "102", nil)
+		second <- err
+	}()
+	select {
+	case <-waiting:
+	case err := <-second:
+		close(release)
+		<-first
+		t.Fatalf("batch did not wait: %v", err)
+	case <-time.After(3 * time.Second):
+		close(release)
+		<-first
+		t.Fatal("batch did not reach cancellation wait")
+	}
+	cancel()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			close(release)
+			<-first
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-first
+		<-second
+		t.Fatal("cancelled batch waited for previous batch")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+}

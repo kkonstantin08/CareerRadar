@@ -282,3 +282,7 @@ The read-only public Habr smoke for vacancy `1000168365` succeeded once and retu
 ## Local restart and public HTML parsing, 2026-11-07
 
 The local service was rebuilt from `093b497`; authenticated cabinet, jobs, sources and OpenAPI returned HTTP 200. The Telegram link remained present and no sources were enabled. A read-only public fetch of Habr vacancy `1000168365` was passed to the generic structured-data parser using a test source URL: it returned one description (2,350 characters) without literal `<p>` tags. This exercises real HTML with the generic parser, but is not a live test of a different provider or a persistence/notification test. No source or vacancy was added.
+
+## Cancellation while monitoring waits, 2026-11-08
+
+Concurrent checks of the same source and shared Jobicy batch lookups now use context-aware gates; a canceled waiter returns without waiting for the running check or batch. GPT-6 Luna (High) reviewed the change and found two test weaknesses: cancellation happened before waiting, and an early first-check failure could hang the test. Both were addressed; a subsequent review noted a scheduling ambiguity, removed by signaling when the waiting call observes the context's Done channel. The reviewer did not run tests. The implementer ran the full PostgreSQL-backed race suite, vet and build. This does not add cross-instance serialization of closure state.

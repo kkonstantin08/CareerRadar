@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
@@ -23,10 +22,10 @@ var ErrNotConfirmed = errors.New("source is not confirmed")
 type Service struct {
 	db          *store.Store
 	fetch       func(context.Context, string) ([]collector.Job, error)
-	locks       [64]sync.Mutex
+	locks       [64]chan struct{}
 	limit       chan struct{}
 	habrGate    *semaphore.Weighted
-	jobicyMu    sync.Mutex
+	jobicyGate  chan struct{}
 	jobicyBatch func(context.Context, []string) (map[string]string, error)
 	jobicyFetch func(context.Context, string, string) ([]collector.Job, error)
 }
@@ -37,8 +36,15 @@ func (s *Service) SetJobicyBatch(batch func(context.Context, []string) (map[stri
 }
 
 func (s *Service) jobicyStatus(ctx context.Context, id string, sources []store.Source) (string, error) {
-	s.jobicyMu.Lock()
-	defer s.jobicyMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	select {
+	case s.jobicyGate <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-s.jobicyGate }()
 	status, err := s.db.JobicyStatus(ctx, id)
 	if err != nil || status != "" {
 		return status, err
@@ -82,7 +88,11 @@ func (s *Service) jobicyStatus(ctx context.Context, id string, sources []store.S
 
 // New creates a monitor backed by the shared database.
 func New(db *store.Store, fetch func(context.Context, string) ([]collector.Job, error)) *Service {
-	return &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2), habrGate: semaphore.NewWeighted(2)}
+	s := &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2), habrGate: semaphore.NewWeighted(2), jobicyGate: make(chan struct{}, 1)}
+	for i := range s.locks {
+		s.locks[i] = make(chan struct{}, 1)
+	}
+	return s
 }
 
 // LockHabr serializes Habr observations through database updates on this shared service.
@@ -99,9 +109,16 @@ func (s *Service) LockHabr(ctx context.Context) (func(), error) {
 
 // Check reads a confirmed source and records its result without inferring closure.
 func (s *Service) Check(ctx context.Context, id int64) (string, error) {
-	lock := &s.locks[uint64(id)%uint64(len(s.locks))]
-	lock.Lock()
-	defer lock.Unlock()
+	lock := s.locks[uint64(id)%uint64(len(s.locks))]
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	select {
+	case lock <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-lock }()
 	sources, err := s.db.Sources(ctx)
 	if err != nil {
 		return "", err
