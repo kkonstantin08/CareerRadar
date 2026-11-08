@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,8 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
 )
+
+var errHomepageTruncated = errors.New("homepage exceeds size limit")
 
 // CompanyResult is a candidate company and unconfirmed career pages.
 type CompanyResult struct {
@@ -87,7 +90,9 @@ func Company(ctx context.Context, client *http.Client, name string) ([]CompanyRe
 		}
 		result := CompanyResult{Name: candidate.Label, Homepage: home.String(), CareerURLs: []string{}}
 		result.CareerURLs, err = careerLinks(ctx, client, home)
-		if err != nil {
+		if errors.Is(err, errHomepageTruncated) {
+			result.Problem = "Сайт компании прочитан не полностью: превышен лимит размера"
+		} else if err != nil {
 			result.Problem = "Не удалось прочитать сайт компании"
 		}
 		out = append(out, result)
@@ -126,7 +131,15 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 	if res.StatusCode != 200 {
 		return nil, errors.New("homepage unavailable")
 	}
-	doc, err := html.Parse(io.LimitReader(res.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	truncated := len(body) > 1<<20
+	if truncated {
+		body = body[:1<<20]
+	}
+	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +194,9 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 		}
 	}
 	walk(doc)
+	if truncated {
+		return out, errHomepageTruncated
+	}
 	return out, nil
 }
 

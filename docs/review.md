@@ -316,3 +316,7 @@ An isolated PostgreSQL integration test links a test chat, records the same sour
 ## Public source through monitor and PostgreSQL, 2026-11-08
 
 An opt-in smoke test checked Habr vacancy `1000168365` twice through the actual collector, monitor and a disposable PostgreSQL schema. One open vacancy was persisted; the second check added no history revisions or notifications. The schema was removed after the test and no owner's data or Telegram was used. The public page may later change or become unavailable. The implementer also ran the full PostgreSQL-backed race suite, vet and build.
+
+## Oversized company homepages, 2026-11-08
+
+Company discovery now detects a homepage larger than 1 MiB, retains links found in the bounded prefix and reports that the page was read incompletely. Controlled tests also cover quoted and unquoted hrefs cut at the byte limit. GPT-6 Luna (High) reviewed the change, raised a possible partial-link concern and withdrew it after the unquoted case was reproduced against the HTML parser. The reviewer did not run tests. The implementer ran the PostgreSQL-backed race suite, vet and build; no real oversized company homepage was tested.
