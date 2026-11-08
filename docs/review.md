@@ -304,3 +304,7 @@ The local service was not listening when checked and was started from code at `0
 ## Isolated browser interaction, 2026-11-08
 
 A temporary local instance with dummy Basic credentials and an isolated PostgreSQL schema was checked in the in-app browser. After navigating to the credential-free URL, the empty catalog rendered; adding an example source showed it as awaiting confirmation, confirming it changed the UI to enabled, and saving `Junior, Intern` preferences produced a success message. The preferences form was visually inspected at the available browser width. The temporary process was stopped and its test schema removed. This is not a real-phone check, a live Telegram test, or an acceptance check using the owner's data.
+
+## Catalog pagination button, 2026-11-08
+
+The sources section no longer renders a duplicate vacancy-pagination button. In an isolated local instance with 51 test vacancies, the browser reproduced the duplicate before the fix; after the fix it was absent from sources and the catalog's button loaded the 51st vacancy. The temporary database schema and process were removed. GPT-6 Luna (High) reviewed the diff and found no concrete issue; it did not run tests. The implementer ran the PostgreSQL-backed race suite, vet, build and JavaScript syntax check. No automated browser regression was added.
