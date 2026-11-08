@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -131,5 +132,60 @@ func TestTruncatedHomepageDoesNotAcceptUnquotedPartialURL(t *testing.T) {
 	got, err := careerLinks(context.Background(), client, home)
 	if !errors.Is(err, errHomepageTruncated) || len(got) != 1 || got[0] != "https://example.org/careers" {
 		t.Fatalf("links=%v err=%v", got, err)
+	}
+}
+
+func TestCompanyWarnsOnlyWhenCareerLinksExceedLimit(t *testing.T) {
+	for _, tc := range []struct {
+		count int
+		warn  bool
+	}{{20, false}, {21, true}} {
+		t.Run(fmt.Sprint(tc.count), func(t *testing.T) {
+			var html strings.Builder
+			for i := 0; i < tc.count; i++ {
+				fmt.Fprintf(&html, `<a href="/jobs/%d">Jobs</a>`, i)
+			}
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				body := html.String()
+				switch {
+				case r.URL.Host == "www.wikidata.org" && r.URL.Query().Get("action") == "wbsearchentities":
+					body = `{"search":[{"id":"Q1","label":"Example"}]}`
+				case r.URL.Host == "www.wikidata.org":
+					body = `{"entities":{"Q1":{"claims":{"P856":[{"mainsnak":{"datavalue":{"value":"https://example.org/"}}}]}}}}`
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})}
+			got, err := Company(context.Background(), client, "Example")
+			if err != nil || len(got) != 1 || len(got[0].CareerURLs) != 20 || (got[0].Problem != "") != tc.warn {
+				t.Fatalf("results=%+v error=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestTrackingVariantsDoNotConsumeCareerLinkLimit(t *testing.T) {
+	var html strings.Builder
+	for i := 0; i < 21; i++ {
+		fmt.Fprintf(&html, `<a href="/jobs?utm_source=%d#section">Jobs</a>`, i)
+	}
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(html.String())), Request: r}, nil
+	})}
+	home, _ := url.Parse("https://example.org/")
+	got, err := careerLinks(context.Background(), client, home)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("links=%v error=%v", got, err)
+	}
+}
+
+func TestCareerLinkDedupPreservesMeaningfulParametersAndFragments(t *testing.T) {
+	body := `<a href="/jobs?team=go#/a">Jobs</a><a href="/jobs?team=python#/a">Jobs</a><a href="/jobs?team=go#/b">Jobs</a>`
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	home, _ := url.Parse("https://example.org/")
+	got, err := careerLinks(context.Background(), client, home)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("links=%v error=%v", got, err)
 	}
 }

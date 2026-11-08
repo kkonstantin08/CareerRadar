@@ -18,6 +18,7 @@ import (
 )
 
 var errHomepageTruncated = errors.New("homepage exceeds size limit")
+var errCareerLinksTruncated = errors.New("career link limit exceeded")
 
 // CompanyResult is a candidate company and unconfirmed career pages.
 type CompanyResult struct {
@@ -92,6 +93,8 @@ func Company(ctx context.Context, client *http.Client, name string) ([]CompanyRe
 		result.CareerURLs, err = careerLinks(ctx, client, home)
 		if errors.Is(err, errHomepageTruncated) {
 			result.Problem = "Сайт компании прочитан не полностью: превышен лимит размера"
+		} else if errors.Is(err, errCareerLinksTruncated) {
+			result.Problem = "Найдено больше 20 карьерных ссылок; показана только часть"
 		} else if err != nil {
 			result.Problem = "Не удалось прочитать сайт компании"
 		}
@@ -159,7 +162,7 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 	seen := map[string]bool{}
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
-		if len(out) >= 20 {
+		if len(out) > 20 {
 			return
 		}
 		if n.Type == html.ElementNode && n.Data == "a" {
@@ -183,8 +186,22 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 				label := strings.ToLower(strings.TrimSpace(nodeText(n)))
 				explicit := label == "careers" || label == "career" || label == "jobs" || label == "вакансии" || label == "карьера"
 				external := explicit && domainErr == nil && net.ParseIP(u.Hostname()) == nil && u.Scheme == "https" && strings.Split(domain, ".")[0] == strings.Split(root, ".")[0]
-				if ((domainErr == nil && domain == root && named) || board || external) && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && !seen[u.String()] {
-					seen[u.String()] = true
+				keyURL := *u
+				// Tracking parameters do not identify a different career page; fragments may be SPA routes.
+				if query, err := url.ParseQuery(keyURL.RawQuery); err == nil {
+					for k := range query {
+						if strings.HasPrefix(strings.ToLower(k), "utm_") {
+							query.Del(k)
+						}
+					}
+					keyURL.RawQuery = query.Encode()
+					if keyURL.RawQuery == "" {
+						keyURL.ForceQuery = false
+					}
+				}
+				key := keyURL.String()
+				if ((domainErr == nil && domain == root && named) || board || external) && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && !seen[key] {
+					seen[key] = true
 					out = append(out, u.String())
 				}
 			}
@@ -194,8 +211,15 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 		}
 	}
 	walk(doc)
+	tooMany := len(out) > 20
+	if tooMany {
+		out = out[:20]
+	}
 	if truncated {
 		return out, errHomepageTruncated
+	}
+	if tooMany {
+		return out, errCareerLinksTruncated
 	}
 	return out, nil
 }

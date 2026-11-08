@@ -320,3 +320,7 @@ An opt-in smoke test checked Habr vacancy `1000168365` twice through the actual 
 ## Oversized company homepages, 2026-11-08
 
 Company discovery now detects a homepage larger than 1 MiB, retains links found in the bounded prefix and reports that the page was read incompletely. Controlled tests also cover quoted and unquoted hrefs cut at the byte limit. GPT-6 Luna (High) reviewed the change, raised a possible partial-link concern and withdrew it after the unquoted case was reproduced against the HTML parser. The reviewer did not run tests. The implementer ran the PostgreSQL-backed race suite, vet and build; no real oversized company homepage was tested.
+
+## Career-link limit warnings, 2026-11-08
+
+Company discovery now reports when more than 20 unique career links were found instead of silently presenting the first 20 as complete. GPT-6 Luna (High) found that tracking variants could count as distinct links; the implementer added UTM-insensitive deduplication while preserving the first published URL, non-tracking parameters and fragments. Controlled tests cover 20 versus 21 links, tracking variants and meaningful parameters/fragments. The reviewer did not run tests; the implementer ran the full PostgreSQL-backed race suite, vet and build. No real company page with more than 20 links was tested.
