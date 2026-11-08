@@ -207,7 +207,9 @@ func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	bot := New(db)
+	searches := 0
 	bot.findCompany = func(context.Context, string) ([]discovery.CompanyResult, error) {
+		searches++
 		return []discovery.CompanyResult{{Name: "Example", Homepage: "https://example.org", CareerURLs: []string{"https://example.org/careers"}}}, nil
 	}
 	pollCtx, cancel := context.WithCancel(ctx)
@@ -223,10 +225,14 @@ func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
 			cancel()
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{map[string]any{"update_id": 42, "message": map[string]any{"chat": map[string]any{"id": 123, "type": "private"}, "from": map[string]any{"id": 123}, "text": "/find Example"}}}})
+		update := map[string]any{"update_id": 42, "message": map[string]any{"chat": map[string]any{"id": 123, "type": "private"}, "from": map[string]any{"id": 123}, "text": "/find Example"}}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{update, update}})
 	}))
 	defer srv.Close()
 	bot.poll(pollCtx, srv.Client(), srv.URL, "TEST")
+	if searches != 1 {
+		t.Fatalf("duplicate update triggered %d searches", searches)
+	}
 	check, err := sql.Open("pgx", u.String())
 	if err != nil {
 		t.Fatal(err)
