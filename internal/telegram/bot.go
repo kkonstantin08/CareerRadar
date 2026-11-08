@@ -109,7 +109,7 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		return "", nil
 	}
 	if parts[0] == "/help" || parts[0] == "/start" {
-		return "Команды: /jobs, /sources, /cabinet, /find название компании, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+		return "Команды: /jobs [ID], /sources [ID] (продолжение списков), /cabinet, /find название компании, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
 	}
 	if parts[0] == "/find" {
 		name := strings.TrimSpace(strings.TrimPrefix(m.Text, "/find"))
@@ -178,61 +178,22 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		return "Данные недоступны.", nil
 	}
 	switch parts[0] {
-	case "/jobs":
-		list, err := data.Jobs(ctx)
-		if err != nil {
-			return "", err
+	case "/jobs", "/sources":
+		cursor := int64(0)
+		if len(parts) > 2 {
+			return "Используйте " + parts[0] + " или " + parts[0] + " ID для продолжения.", nil
 		}
-		prefs, err := data.Preferences(ctx)
-		if err != nil {
-			return "", err
+		if len(parts) == 2 {
+			var err error
+			cursor, err = strconv.ParseInt(parts[1], 10, 64)
+			if err != nil || cursor <= 0 {
+				return "Некорректный ID для продолжения.", nil
+			}
 		}
-		var out strings.Builder
-		for _, j := range list {
-			match := prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
-			if match == jobs.Unsuitable {
-				continue
-			}
-			line := fmt.Sprintf("%d · %s · %s\n", j.ID, j.Title, j.Company)
-			if match == jobs.NeedsClarification {
-				line += "Требует уточнения\n"
-			}
-			if j.Closed {
-				line += "Закрыта\n"
-			}
-			if j.Status != "" {
-				line += "Отклик: " + j.Status + "\n"
-			}
-			line += j.URL + "\n"
-			if b.cabinetURL != "" {
-				line += "В кабинете: " + b.cabinetURL + "#job-" + strconv.FormatInt(j.ID, 10) + "\n"
-			}
-			if out.Len()+len(line) > 3000 {
-				break
-			}
-			out.WriteString(line)
+		if parts[0] == "/jobs" {
+			return b.jobsPage(ctx, data, cursor)
 		}
-		if out.Len() == 0 {
-			return "Вакансий пока нет.", nil
-		}
-		return out.String(), nil
-	case "/sources":
-		list, err := data.Sources(ctx)
-		if err != nil {
-			return "", err
-		}
-		var out strings.Builder
-		for _, s := range list {
-			line := fmt.Sprintf("%d · %s · %s\n", s.ID, s.Name, s.URL)
-			if out.Len()+len(line) > 3000 {
-				break
-			}
-			out.WriteString(line)
-		}
-		if out.Len() == 0 {
-			return "Источников пока нет.", nil
-		}
-		return out.String(), nil
+		return b.sourcesPage(ctx, data, cursor)
 	case "/add":
 		if len(parts) < 3 {
 			return "Используйте /add URL название", nil

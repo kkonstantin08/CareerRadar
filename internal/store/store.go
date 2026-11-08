@@ -142,7 +142,18 @@ func addSource(ctx context.Context, db interface {
 
 // Sources lists saved sources.
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,url,enabled,problem FROM sources ORDER BY id`)
+	return s.SourcesAfter(ctx, 0, 0)
+}
+
+// SourcesAfter lists sources in ascending ID order after cursor, optionally limited.
+func (s *Store) SourcesAfter(ctx context.Context, cursor int64, limit int) ([]Source, error) {
+	query := `SELECT id,name,url,enabled,problem FROM sources WHERE id>$1 ORDER BY id`
+	args := []any{cursor}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

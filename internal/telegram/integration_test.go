@@ -247,3 +247,83 @@ func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
 		t.Fatalf("sources=%+v error=%v", sources, err)
 	}
 }
+
+func TestTelegramPaginationUsesPersistentCursors(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("tgpaging_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sqlDB, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if _, err = sqlDB.ExecContext(ctx, `INSERT INTO sources(name,url,enabled) SELECT 'Source '||i||repeat('x',80),'https://example.org/'||i,false FROM generate_series(1,101) i`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = sqlDB.ExecContext(ctx, `INSERT INTO jobs(url,source_id,title) SELECT 'https://example.org/jobs/'||i,1,'Job '||i||repeat('x',80) FROM generate_series(1,101) i`); err != nil {
+		t.Fatal(err)
+	}
+	code, err := db.NewLinkCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.LinkTelegram(ctx, code, 123); err != nil {
+		t.Fatal(err)
+	}
+	bot := New(db)
+	for _, kind := range []string{"jobs", "sources"} {
+		t.Run(kind, func(t *testing.T) {
+			seen := map[int64]bool{}
+			command := "/" + kind
+			for page := 0; page < 101; page++ {
+				reply := bot.Handle(ctx, Message{ChatID: 123, UserID: 123, ChatType: "private", Text: command})
+				for _, line := range strings.Split(reply, "\n") {
+					var id int64
+					if _, err := fmt.Sscanf(line, "%d ·", &id); err == nil {
+						if seen[id] {
+							t.Fatalf("duplicate %d", id)
+						}
+						seen[id] = true
+					}
+				}
+				marker := "/" + kind + " "
+				i := strings.LastIndex(reply, marker)
+				if i < 0 {
+					break
+				}
+				var cursor int64
+				if _, err := fmt.Sscanf(reply[i:], "/"+kind+" %d", &cursor); err != nil {
+					t.Fatalf("continuation %q", reply)
+				}
+				command = fmt.Sprintf("/%s %d", kind, cursor)
+			}
+			if len(seen) != 101 {
+				t.Fatalf("%s got %d of 101", kind, len(seen))
+			}
+		})
+	}
+}

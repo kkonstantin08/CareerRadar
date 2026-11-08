@@ -624,3 +624,117 @@ func TestCompanySearchShowsLinksBeforeMessageLimit(t *testing.T) {
 		t.Fatalf("reply=%q length=%d", reply, len(reply))
 	}
 }
+
+type pagedData struct {
+	fakeData
+	jobs    []store.Job
+	sources []store.Source
+}
+
+func (f *pagedData) Jobs(context.Context) ([]store.Job, error)       { return f.jobs, nil }
+func (f *pagedData) Sources(context.Context) ([]store.Source, error) { return f.sources, nil }
+
+func TestTelegramListsCanContinueWithoutLosingEntries(t *testing.T) {
+	f := &pagedData{fakeData: fakeData{fakeLinks: fakeLinks{linked: 5}}}
+	for i := int64(1); i <= 40; i++ {
+		f.sources = append(f.sources, store.Source{ID: i, Name: fmt.Sprintf("Source-%02d-%s", i, strings.Repeat("x", 100)), URL: fmt.Sprintf("https://example.org/%d", i)})
+		f.jobs = append([]store.Job{{ID: i, Observation: store.Observation{Title: fmt.Sprintf("Job-%02d-%s", i, strings.Repeat("x", 100)), URL: fmt.Sprintf("https://example.org/jobs/%d", i)}}}, f.jobs...)
+	}
+	b := New(f)
+	for _, kind := range []string{"jobs", "sources"} {
+		t.Run(kind, func(t *testing.T) {
+			seen := map[int64]bool{}
+			command := "/" + kind
+			for page := 0; page < 40; page++ {
+				reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: command})
+				if len(reply) > 4096 {
+					t.Fatalf("oversized reply %d", len(reply))
+				}
+				for _, line := range strings.Split(reply, "\n") {
+					var id int64
+					if _, err := fmt.Sscanf(line, "%d ·", &id); err == nil {
+						if seen[id] {
+							t.Fatalf("duplicate id %d", id)
+						}
+						seen[id] = true
+					}
+				}
+				marker := "/" + kind + " "
+				i := strings.LastIndex(reply, marker)
+				if i < 0 {
+					break
+				}
+				var cursor int64
+				if _, err := fmt.Sscanf(reply[i:], "/"+kind+" %d", &cursor); err != nil {
+					t.Fatalf("invalid continuation: %q", reply[i:])
+				}
+				command = fmt.Sprintf("/%s %d", kind, cursor)
+			}
+			if len(seen) != 40 {
+				t.Fatalf("%s returned %d of 40 entries", kind, len(seen))
+			}
+		})
+	}
+}
+
+func TestTelegramListLongEntriesAndInvalidCursor(t *testing.T) {
+	f := &pagedData{fakeData: fakeData{fakeLinks: fakeLinks{linked: 5}}}
+	longURL := "https://example.org/" + strings.Repeat("x", 5000)
+	f.jobs = []store.Job{{ID: 2, Observation: store.Observation{Title: strings.Repeat("я", 2000), URL: longURL}}, {ID: 1, Observation: store.Observation{Title: "Second", URL: "https://example.org/2"}}}
+	f.sources = []store.Source{{ID: 1, Name: strings.Repeat("я", 2000), URL: longURL}, {ID: 2, Name: "Second", URL: "https://example.org/2"}}
+	b := New(f)
+	for _, kind := range []string{"jobs", "sources"} {
+		reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/" + kind})
+		if len(reply) > 4096 || !strings.Contains(reply, "Ссылка слишком длинная") || !strings.Contains(reply, "Second") {
+			t.Fatalf("%s length=%d reply=%q", kind, len(reply), reply)
+		}
+		for _, value := range []string{"0", "-1", "bad"} {
+			reply = b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/" + kind + " " + value})
+			if !strings.Contains(reply, "Некорректный ID") {
+				t.Fatalf("%s %s: %q", kind, value, reply)
+			}
+		}
+	}
+}
+
+func TestLongCabinetURLDoesNotStallJobPagination(t *testing.T) {
+	f := &pagedData{fakeData: fakeData{fakeLinks: fakeLinks{linked: 5}}}
+	f.jobs = []store.Job{{ID: 2, Observation: store.Observation{Title: strings.Repeat("я", 120), Company: strings.Repeat("я", 100), URL: "https://example.org/" + strings.Repeat("x", 1100)}}, {ID: 1, Observation: store.Observation{Title: "Next", URL: "https://example.org/next"}}}
+	b := New(f)
+	if err := b.SetCabinetURL("https://" + strings.Repeat("a", 2900) + ".example/"); err != nil {
+		t.Fatal(err)
+	}
+	reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"})
+	if !strings.Contains(reply, "2 ·") || strings.Contains(reply, "/jobs 0") || len(reply) > 4096 {
+		t.Fatalf("length=%d reply=%q", len(reply), reply)
+	}
+}
+
+type unmatchingData struct{ pagedData }
+
+func (f *unmatchingData) Preferences(context.Context) (jobs.Preferences, error) {
+	return jobs.Preferences{Levels: []string{"Junior"}}, nil
+}
+
+func TestTelegramJobsScanLimitOnlyOffersRealContinuation(t *testing.T) {
+	for _, count := range []int{5000, 5001} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			f := &unmatchingData{pagedData: pagedData{fakeData: fakeData{fakeLinks: fakeLinks{linked: 5}}}}
+			for i := count; i >= 1; i-- {
+				f.jobs = append(f.jobs, store.Job{ID: int64(i), Observation: store.Observation{Title: "Senior Engineer", Level: "Senior", URL: "https://example.org/job"}})
+			}
+			reply := New(f).Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/jobs"})
+			if strings.Contains(reply, "/jobs ") != (count > 5000) {
+				t.Fatalf("count=%d reply=%q", count, reply)
+			}
+		})
+	}
+}
+
+func TestSourceListShowsAttentionReason(t *testing.T) {
+	f := &pagedData{fakeData: fakeData{fakeLinks: fakeLinks{linked: 5}}, sources: []store.Source{{ID: 1, Name: "Example", URL: "https://example.org", Problem: "Источник недоступен"}}}
+	reply := New(f).Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "/sources"})
+	if !strings.Contains(reply, "Требует внимания: Источник недоступен") {
+		t.Fatalf("reply %q", reply)
+	}
+}
