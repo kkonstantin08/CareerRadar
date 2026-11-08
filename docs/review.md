@@ -300,3 +300,7 @@ A PostgreSQL integration test links a private chat in an isolated schema, applie
 ## Local service restart, 2026-11-08
 
 The local service was not listening when checked and was started from code at `0f9ef11`. Authenticated HTTP checks returned 200 for the cabinet, jobs, sources and OpenAPI. One Telegram link and zero enabled sources were present. The in-app browser could not complete HTTP Basic authentication (`ERR_INVALID_AUTH_CREDENTIALS`), so this is not a visual or interactive UI acceptance check.
+
+## Isolated browser interaction, 2026-11-08
+
+A temporary local instance with dummy Basic credentials and an isolated PostgreSQL schema was checked in the in-app browser. After navigating to the credential-free URL, the empty catalog rendered; adding an example source showed it as awaiting confirmation, confirming it changed the UI to enabled, and saving `Junior, Intern` preferences produced a success message. The preferences form was visually inspected at the available browser width. The temporary process was stopped and its test schema removed. This is not a real-phone check, a live Telegram test, or an acceptance check using the owner's data.
