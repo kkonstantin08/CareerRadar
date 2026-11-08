@@ -1062,3 +1062,73 @@ func TestJobicyBatchWaitHonorsCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPartialCrawlKeepsVacancyAndDeduplicatesWarning(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("partial_crawl_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	source, err := db.AddSource(ctx, "Example", "https://example.org/careers", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: monitorTransport(func(r *http.Request) (*http.Response, error) {
+		body := `<a href="/jobs/good">Good job</a><a href="/jobs/empty">Empty job</a>`
+		if r.URL.Path == "/jobs/good" {
+			body = `<script type="application/ld+json">{"@type":"JobPosting","title":"Go Engineer","hiringOrganization":{"name":"Example"},"validThrough":"2027-01-01"}</script>`
+		}
+		if r.URL.Path == "/jobs/empty" {
+			body = `<html></html>`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	svc := New(db, func(ctx context.Context, raw string) ([]collector.Job, error) {
+		return collector.Fetch(ctx, client, raw)
+	})
+	for range 2 {
+		problem, err := svc.Check(ctx, source.ID)
+		if err != nil || !strings.Contains(problem, "no extractable vacancy") {
+			t.Fatalf("problem=%q error=%v", problem, err)
+		}
+	}
+	rows, err := db.Jobs(ctx)
+	if err != nil || len(rows) != 1 || rows[0].Title != "Go Engineer" || rows[0].Closed {
+		t.Fatalf("jobs=%+v error=%v", rows, err)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil || len(sources) != 1 || !strings.Contains(sources[0].Problem, "no extractable vacancy") {
+		t.Fatalf("sources=%+v error=%v", sources, err)
+	}
+	sqlDB, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	var n int
+	if err = sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE 'check:%'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("warnings=%d error=%v", n, err)
+	}
+}
