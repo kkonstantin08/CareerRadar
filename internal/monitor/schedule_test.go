@@ -321,7 +321,7 @@ func TestPublishedProviderListingsReopenSourceClosures(t *testing.T) {
 	}
 	t.Run("X5 registration", func(t *testing.T) {
 		const jobURL = "https://generation.x5.ru/internships"
-		src, err := db.AddSource(ctx, "X5", jobURL, true)
+		src, err := db.AddSource(ctx, "X5", jobURL+"#registration", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -383,6 +383,42 @@ func TestPublishedProviderListingsReopenSourceClosures(t *testing.T) {
 		details, err := db.Details(ctx, id)
 		if err != nil || !details.Job.Closed {
 			t.Fatalf("owner closure lost: %+v %v", details.Job, err)
+		}
+		canonicalSource, err := db.AddSource(ctx, "X5 canonical", jobURL, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		waiting := New(db, func(ctx context.Context, raw string) ([]collector.Job, error) {
+			if raw == canonicalSource.URL {
+				return nil, errors.New("concurrent fetch unexpectedly entered")
+			}
+			close(entered)
+			<-release
+			return nil, nil
+		})
+		go func() {
+			_, checkErr := waiting.Check(ctx, src.ID)
+			finished <- checkErr
+			close(finished)
+		}()
+		defer func() {
+			close(release)
+			if checkErr := <-finished; checkErr != nil {
+				t.Errorf("first check failed: %v", checkErr)
+			}
+		}()
+		select {
+		case <-entered:
+		case checkErr := <-finished:
+			t.Fatalf("first check stopped early: %v", checkErr)
+		case <-time.After(5 * time.Second):
+			t.Fatal("first check did not enter fetch")
+		}
+		short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		if problem, err := waiting.Check(short, canonicalSource.ID); !errors.Is(err, context.DeadlineExceeded) || problem != "" {
+			t.Fatalf("overlapping X5 check was not cancelled: %q %v", problem, err)
 		}
 	})
 }

@@ -25,6 +25,7 @@ type Service struct {
 	locks       [64]chan struct{}
 	limit       chan struct{}
 	habrGate    *semaphore.Weighted
+	x5Gate      chan struct{}
 	jobicyGate  chan struct{}
 	jobicyBatch func(context.Context, []string) (map[string]string, error)
 	jobicyFetch func(context.Context, string, string) ([]collector.Job, error)
@@ -88,7 +89,7 @@ func (s *Service) jobicyStatus(ctx context.Context, id string, sources []store.S
 
 // New creates a monitor backed by the shared database.
 func New(db *store.Store, fetch func(context.Context, string) ([]collector.Job, error)) *Service {
-	s := &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2), habrGate: semaphore.NewWeighted(2), jobicyGate: make(chan struct{}, 1)}
+	s := &Service{db: db, fetch: fetch, limit: make(chan struct{}, 2), habrGate: semaphore.NewWeighted(2), x5Gate: make(chan struct{}, 1), jobicyGate: make(chan struct{}, 1)}
 	for i := range s.locks {
 		s.locks[i] = make(chan struct{}, 1)
 	}
@@ -135,6 +136,18 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 	}
 	if !src.Enabled {
 		return "", ErrNotConfirmed
+	}
+	closureURL := src.URL
+	x5Evidence := collector.X5InternshipEvidenceURL(src.URL)
+	if x5Evidence != "" {
+		// Both accepted X5 source URLs update the same program's registration state.
+		select {
+		case s.x5Gate <- struct{}{}:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		defer func() { <-s.x5Gate }()
+		closureURL = x5Evidence
 	}
 	if sourceURL, err := url.Parse(src.URL); err == nil && strings.EqualFold(sourceURL.Hostname(), "career.habr.com") {
 		release, err := s.LockHabr(ctx)
@@ -223,7 +236,7 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 	}
 	for _, job := range found {
 		if job.Closed {
-			if fetchErr != nil || job.URL != src.URL {
+			if fetchErr != nil || job.URL != closureURL {
 				problem = "Closure evidence could not be verified"
 				continue
 			}
@@ -248,8 +261,8 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 				return "", err
 			}
 		}
-		if evidence := collector.X5InternshipEvidenceURL(src.URL); evidence != "" && job.URL == evidence && job.SourceURL == evidence && job.ApplyURL == evidence+"#registration" && fetchErr == nil {
-			if err := s.db.ReopenX5Internship(ctx, job.URL, evidence); err != nil {
+		if x5Evidence != "" && job.URL == x5Evidence && job.SourceURL == x5Evidence && job.ApplyURL == x5Evidence+"#registration" && fetchErr == nil {
+			if err := s.db.ReopenX5Internship(ctx, job.URL, x5Evidence); err != nil {
 				return "", err
 			}
 		}

@@ -61,3 +61,18 @@ func TestX5InternshipStatusFromApplicationSection(t *testing.T) {
 		})
 	}
 }
+
+func TestX5InternshipRegistrationAnchorUsesCanonicalRequest(t *testing.T) {
+	const canonical = "https://generation.x5.ru/internships"
+	const body = `<main id="content"><section aria-label="Стажировка в Х5"></section><section aria-label="Подай заявку"><a href="#registration">Набор закрыт</a></section><section id="registration"></section></main>`
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != canonical {
+			t.Fatalf("request = %s", r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Request: r, Header: make(http.Header)}, nil
+	})}
+	got, err := Fetch(context.Background(), client, canonical+"#registration")
+	if err != nil || len(got) != 1 || !got[0].Closed || got[0].URL != canonical || got[0].SourceURL != canonical {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}

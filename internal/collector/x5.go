@@ -14,8 +14,8 @@ const x5InternshipURL = "https://generation.x5.ru/internships"
 
 // X5InternshipEvidenceURL identifies the official program page used as registration evidence.
 func X5InternshipEvidenceURL(raw string) string {
-	if raw == x5InternshipURL {
-		return raw
+	if raw == x5InternshipURL || raw == x5InternshipURL+"#registration" {
+		return x5InternshipURL
 	}
 	return ""
 }

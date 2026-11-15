@@ -108,6 +108,9 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 	if canonical := collector.LeverClosureEvidenceURL(jobURL); canonical != "" {
 		jobURL = canonical
 	}
+	if canonical := collector.X5InternshipEvidenceURL(jobURL); canonical != "" {
+		jobURL = canonical
+	}
 	jobURL, err := jobicyStoredURL(ctx, s.db, jobURL)
 	if err != nil {
 		return false, err
@@ -290,7 +293,7 @@ func (s *Store) ReopenX5Internship(ctx context.Context, jobURL, evidence string)
 	if expected := collector.X5InternshipEvidenceURL(jobURL); expected == "" || expected != evidence {
 		return errors.New("invalid X5 reopening evidence")
 	}
-	return s.reopenSourceClosure(ctx, jobURL, evidence, "x5")
+	return s.reopenSourceClosure(ctx, evidence, evidence, "x5")
 }
 
 func (s *Store) reopenSourceClosure(ctx context.Context, jobURL, evidence, origin string) error {
