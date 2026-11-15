@@ -355,3 +355,13 @@ A real Yandex card returned a page-limit warning because the collector followed 
 The Yandex collector smoke returned one open record. A local run with an empty database verified migrations, HTTP Basic authentication, the cabinet, OpenAPI and Swagger, duplicate-free CSV import, source confirmation, two real checks, single-vacancy and single-revision persistence, evidence, the unknown-level filter and the application status through REST. An independent Habr monitor smoke verified one saved record with no duplicate revisions or notifications on repeat. Habr global RSS search for `Go` returned 20 relevant results. The direct Ozon Tech and Ozon career requests hit a redirect loop in this environment. These checks used disposable PostgreSQL state and exercised no live Telegram commands.
 
 After the redirect fix, `go test -race -count=1 ./...` passed with a fresh PostgreSQL test database. `go vet ./...`, `go build ./...`, OpenAPI JSON validation and `git diff --check` passed.
+
+## Google Sheets import and FutureToday, 2026-11-15
+
+The owner-provided spreadsheet was available through an authenticated read-only Google Sheets connection. Its `SOURCES` sheet uses `company` and `start_url`. The local cabinet imported 13 rows through the existing CSV endpoint, left every new source awaiting confirmation and kept the same records on a repeated import. CareerRadar requires no Google credentials to run.
+
+The public FutureToday catalog and individual programs publish structured state in their HTML. The adapter reads only verified HTTPS paths, retains attributable facts and bounds catalog results to 20. The catalog includes an internal CMS continuation address, which is never fetched. An unavailable page or preregistration status does not prove closure.
+
+GPT-6 Luna (High) reviewed the change. Regression tests reproduced two findings: generic program titles acquired an unsupported Intern level, and a catalog card with an explicit draft publication status was accepted. The fixes keep unconfirmed levels empty and reject a conflicting explicit status while accepting the omitted field observed in the live catalog. Other fixture cases cover exact-card and catalog provenance, a mismatched route or host, malformed state, and preregistration.
+
+A smoke test used the compiled service, authenticated REST, an empty PostgreSQL database and the public FutureToday pages. The catalog saved nine programs. A repeat produced no additional revisions or notifications. The T-Bank individual card reused the catalog's job ID and flagged ambiguous application links. The Gazprom Neft preregistration card retained its facts and warning without closure. The full PostgreSQL-backed race suite, vet, build and `git diff --check` passed after the review fixes.

@@ -123,6 +123,9 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 	if company, posting := smartRecruitersPath(root); company != "" {
 		return fetchSmartRecruiters(ctx, client, company, posting)
 	}
+	if path := futureTodayPath(root); path != "" {
+		return fetchFutureToday(ctx, client, path)
+	}
 	if api := greenhouseURL(root); api != "" {
 		body, _, err := readPage(ctx, client, api)
 		var responseErr *httpStatusError

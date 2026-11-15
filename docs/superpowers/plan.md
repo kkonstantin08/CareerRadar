@@ -16,3 +16,10 @@ Each slice begins with a failing behavioral test and ends with focused verificat
 1. Reproduce the page-limit warning for an individual Yandex vacancy. Add collector tests for an exact card and for a card with related listings; stop traversal at the individual card and retain only its own observations. Keep filtered listing pages crawlable.
 2. Cover mixed and unknown-only catalog level filters through REST and PostgreSQL, then expose the unknown value in the existing filter and OpenAPI.
 3. Recheck the public card and global RSS search, then run the PostgreSQL race suite, vet, build and API checks. Resolve material findings from the independent review and record the current limits in both READMEs.
+
+## Imported FutureToday sources
+
+1. Read the real `SOURCES` header and import its rows twice into CareerRadar. Verify that new sources await confirmation and the second import adds no rows.
+2. Write collector tests for the exact public FutureToday internship listing and individual card. Cover malformed state, a conflicting destination, a same-card preregistration, and a catalog advertising additional data on a non-public host. Check that the collector reports uncertainty and does not infer closure.
+3. Read the observed `__NEXT_DATA__` payload over bounded HTTPS. Reuse the current fetch and application-link handling, and retain only the verified listing or card fields. Keep public source checks separate from the automated tests.
+4. Run the public listing and an individual page through REST with a disposable PostgreSQL database. Run the full race suite, vet and build. Record the independent review and updated collection limits.
