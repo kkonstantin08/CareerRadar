@@ -60,19 +60,8 @@ func habrArchived(body []byte) bool {
 	var visit func(*html.Node) bool
 	visit = func(n *html.Node) bool {
 		if n.Type == html.ElementNode {
-			if n.Data == "script" || n.Data == "style" || n.Data == "template" {
+			if hiddenHTMLElement(n) {
 				return false
-			}
-			for _, a := range n.Attr {
-				if a.Key == "hidden" || a.Key == "aria-hidden" && strings.EqualFold(strings.TrimSpace(a.Val), "true") {
-					return false
-				}
-				if a.Key == "style" {
-					style := strings.ToLower(strings.Join(strings.Fields(a.Val), ""))
-					if strings.Contains(style, "display:none") || strings.Contains(style, "visibility:hidden") {
-						return false
-					}
-				}
 			}
 			for _, a := range n.Attr {
 				if a.Key == "class" {
@@ -92,4 +81,22 @@ func habrArchived(body []byte) bool {
 		return false
 	}
 	return visit(doc)
+}
+
+func hiddenHTMLElement(n *html.Node) bool {
+	if n.Data == "script" || n.Data == "style" || n.Data == "template" {
+		return true
+	}
+	for _, a := range n.Attr {
+		if a.Key == "hidden" || a.Key == "aria-hidden" && strings.EqualFold(strings.TrimSpace(a.Val), "true") {
+			return true
+		}
+		if a.Key == "style" {
+			style := strings.ToLower(strings.Join(strings.Fields(a.Val), ""))
+			if strings.Contains(style, "display:none") || strings.Contains(style, "visibility:hidden") {
+				return true
+			}
+		}
+	}
+	return false
 }

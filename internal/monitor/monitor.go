@@ -248,6 +248,11 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 				return "", err
 			}
 		}
+		if evidence := collector.X5InternshipEvidenceURL(src.URL); evidence != "" && job.URL == evidence && job.SourceURL == evidence && job.ApplyURL == evidence+"#registration" && fetchErr == nil {
+			if err := s.db.ReopenX5Internship(ctx, job.URL, evidence); err != nil {
+				return "", err
+			}
+		}
 		if evidence := collector.GreenhouseClosureEvidenceURL(src.URL); evidence != "" && evidence == collector.GreenhouseClosureEvidenceURL(job.URL) {
 			if err := s.db.ReopenGreenhouse(ctx, job.URL, evidence); err != nil {
 				if errors.Is(err, store.ErrAmbiguousJobIdentity) {

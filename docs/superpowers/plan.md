@@ -23,3 +23,9 @@ Each slice begins with a failing behavioral test and ends with focused verificat
 2. Write collector tests for the exact public FutureToday internship listing and individual card. Cover malformed state, a conflicting destination, a same-card preregistration, and a catalog advertising additional data on a non-public host. Check that the collector reports uncertainty and does not infer closure.
 3. Read the observed `__NEXT_DATA__` payload over bounded HTTPS. Reuse the current fetch and application-link handling, and retain only the verified listing or card fields. Keep public source checks separate from the automated tests.
 4. Run the public listing and an individual page through REST with a disposable PostgreSQL database. Run the full race suite, vet and build. Record the independent review and updated collection limits.
+
+## X5 internship registration
+
+1. Reproduce the inability to distinguish open, closed and uncertain registration on the official X5 internship page. Use the exact unredirected URL, the program section and the application CTA. Test a hidden or unrelated CTA, redirects and HTTP failures.
+2. Wire closure and reopening into the existing transactional store. Verify duplicate-free history and notifications, retained observations and application status, uncertainty handling, and preservation of owner closures.
+3. Confirm the public closed state through the real collector and an isolated PostgreSQL check. Run the full race suite, vet, build and GPT-6 Luna (High) review.

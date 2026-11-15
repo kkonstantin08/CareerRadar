@@ -126,6 +126,9 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 	if path := futureTodayPath(root); path != "" {
 		return fetchFutureToday(ctx, client, path)
 	}
+	if X5InternshipEvidenceURL(rawURL) != "" {
+		return fetchX5Internship(ctx, client)
+	}
 	if api := greenhouseURL(root); api != "" {
 		body, _, err := readPage(ctx, client, api)
 		var responseErr *httpStatusError

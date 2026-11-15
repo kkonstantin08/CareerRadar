@@ -319,6 +319,72 @@ func TestPublishedProviderListingsReopenSourceClosures(t *testing.T) {
 			}
 		})
 	}
+	t.Run("X5 registration", func(t *testing.T) {
+		const jobURL = "https://generation.x5.ru/internships"
+		src, err := db.AddSource(ctx, "X5", jobURL, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var label string
+		status := http.StatusOK
+		client := &http.Client{Transport: monitorTransport(func(r *http.Request) (*http.Response, error) {
+			page := `<main id="content"><section aria-label="Стажировка в Х5"><h1>Стажировка в Х5</h1></section><section aria-label="Подай заявку"><a href="/internships#registration">` + label + `</a></section><section id="registration"></section></main>`
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(page)), Request: r, Header: make(http.Header)}, nil
+		})}
+		svc := New(db, func(ctx context.Context, raw string) ([]collector.Job, error) {
+			return collector.Fetch(ctx, client, raw)
+		})
+		label = "Подать заявку"
+		if _, err := svc.Check(ctx, src.ID); err != nil {
+			t.Fatal(err)
+		}
+		var id int64
+		if err := sqlDB.QueryRowContext(ctx, `SELECT id FROM jobs WHERE url=$1`, jobURL).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SetStatus(ctx, id, "Откликнулся"); err != nil {
+			t.Fatal(err)
+		}
+		for _, step := range []struct {
+			label, origin string
+			status        int
+			history       int
+		}{
+			{"Набор закрыт", "", 403, 1},
+			{"Набор закрыт", "x5", 200, 2},
+			{"Набор закрыт", "x5", 200, 2},
+			{"Подробнее", "x5", 200, 2},
+			{"Подать заявку", "", 200, 3},
+			{"Подать заявку", "", 200, 3},
+		} {
+			label, status = step.label, step.status
+			if _, err = svc.Check(ctx, src.ID); err != nil {
+				t.Fatal(err)
+			}
+			details, err := db.Details(ctx, id)
+			if err != nil || details.Job.Closed != (step.origin != "") || details.Job.Status != "Откликнулся" || len(details.History) != step.history {
+				t.Fatalf("label=%s status=%d expected history=%d details=%+v err=%v", label, status, step.history, details, err)
+			}
+			var origin string
+			if err := sqlDB.QueryRowContext(ctx, `SELECT closed_by FROM jobs WHERE id=$1`, id).Scan(&origin); err != nil || origin != step.origin {
+				t.Fatalf("closed by %q, expected %q: %v", origin, step.origin, err)
+			}
+		}
+		var reopen int
+		if err = sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE event_key LIKE $1`, fmt.Sprintf("reopen:%d:%%", id)).Scan(&reopen); err != nil || reopen != 1 {
+			t.Fatalf("reopening notifications=%d err=%v", reopen, err)
+		}
+		if err = db.ConfirmClosed(ctx, id, jobURL); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = svc.Check(ctx, src.ID); err != nil {
+			t.Fatal(err)
+		}
+		details, err := db.Details(ctx, id)
+		if err != nil || !details.Job.Closed {
+			t.Fatalf("owner closure lost: %+v %v", details.Job, err)
+		}
+	})
 }
 
 func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {

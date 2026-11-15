@@ -119,6 +119,8 @@ func (s *Store) ConfirmClosedURL(ctx context.Context, jobURL, evidence string) (
 		origin = "lever"
 	} else if collector.HabrArchiveEvidenceURL(jobURL) == evidence {
 		origin = "habr"
+	} else if collector.X5InternshipEvidenceURL(jobURL) == evidence {
+		origin = "x5"
 	}
 	jobURL, err = storedAliasURL(ctx, s.db, jobURL, collector.PostingURL(jobURL))
 	if err != nil {
@@ -283,6 +285,14 @@ func (s *Store) ReopenHabr(ctx context.Context, jobURL, evidence string) error {
 	return s.reopenSourceClosure(ctx, jobURL, evidence, "habr")
 }
 
+// ReopenX5Internship reverses a closure recorded by the official X5 registration page.
+func (s *Store) ReopenX5Internship(ctx context.Context, jobURL, evidence string) error {
+	if expected := collector.X5InternshipEvidenceURL(jobURL); expected == "" || expected != evidence {
+		return errors.New("invalid X5 reopening evidence")
+	}
+	return s.reopenSourceClosure(ctx, jobURL, evidence, "x5")
+}
+
 func (s *Store) reopenSourceClosure(ctx context.Context, jobURL, evidence, origin string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -340,11 +350,16 @@ func validateJobicyEvidence(jobURL, evidence string) error {
 }
 
 func validateClosureEvidence(jobURL, evidence string) error {
-	greenhouseEvidence := collector.GreenhouseClosureEvidenceURL(jobURL)
-	leverEvidence := collector.LeverClosureEvidenceURL(jobURL)
-	habrEvidence := collector.HabrArchiveEvidenceURL(jobURL)
-	if validateJobicyEvidence(jobURL, evidence) == nil || greenhouseEvidence != "" && greenhouseEvidence == evidence || leverEvidence != "" && leverEvidence == evidence || habrEvidence != "" && habrEvidence == evidence {
+	if validateJobicyEvidence(jobURL, evidence) == nil {
 		return nil
+	}
+	for _, expected := range []string{
+		collector.GreenhouseClosureEvidenceURL(jobURL), collector.LeverClosureEvidenceURL(jobURL),
+		collector.HabrArchiveEvidenceURL(jobURL), collector.X5InternshipEvidenceURL(jobURL),
+	} {
+		if expected != "" && expected == evidence {
+			return nil
+		}
 	}
 	return errors.New("invalid source closure evidence")
 }
