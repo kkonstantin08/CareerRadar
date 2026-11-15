@@ -15,6 +15,62 @@ type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestYandexVacancyKeepsOnlyTheRequestedCard(t *testing.T) {
+	const card = "/jobs/vacancies/go-developer-49308"
+	const board = "/jobs/professions/backend-developer"
+	const related = "/jobs/vacancies/related-49309"
+	const host = "https://yandex.ru"
+	for _, start := range []string{card, board} {
+		t.Run(start, func(t *testing.T) {
+			var paths []string
+			client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				paths = append(paths, r.URL.Path)
+				var page string
+				switch r.URL.Path {
+				case board:
+					page = `<a href="` + card + `">Go developer</a>`
+				case card:
+					page = `<script type="application/ld+json">[
+					  {"@type":"JobPosting","title":"Go Developer","url":"` + card + `"},
+					  {"@type":"JobPosting","title":"Related","url":"` + related + `"},
+					  {"@type":"JobPosting","title":"Wrong host","url":"https://example.org` + card + `"}
+					]</script><a href="` + related + `">Related vacancy</a>`
+				default:
+					page = `<script type="application/ld+json">{"@type":"JobPosting","title":"Related"}</script>`
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(page)), Header: make(http.Header), Request: r}, nil
+			})}
+			got, err := Fetch(context.Background(), client, host+start)
+			wantPaths := card
+			if start == board {
+				wantPaths = board + " " + card
+			}
+			if err != nil || len(got) != 1 || got[0].Title != "Go Developer" || got[0].URL != host+card || got[0].SourceURL != host+card || strings.Join(paths, " ") != wantPaths {
+				t.Fatalf("jobs=%+v requests=%v err=%v", got, paths, err)
+			}
+		})
+	}
+}
+
+func TestYandexVacancyRedirectDoesNotSubstituteAnotherPage(t *testing.T) {
+	const card = "/jobs/vacancies/go-developer-49308"
+	for _, destination := range []string{"/jobs/vacancies", "/jobs/vacancies/other-49309"} {
+		t.Run(destination, func(t *testing.T) {
+			client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == card {
+					return &http.Response{StatusCode: 302, Header: http.Header{"Location": {destination}}, Body: http.NoBody}, nil
+				}
+				page := `<script type="application/ld+json">{"@type":"JobPosting","title":"Other opening"}</script>`
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(page)), Header: make(http.Header), Request: r}, nil
+			})}
+			got, err := Fetch(context.Background(), client, "https://yandex.ru"+card)
+			if err == nil || len(got) != 0 {
+				t.Fatalf("redirect yielded %d jobs, err=%v", len(got), err)
+			}
+		})
+	}
+}
+
 func TestHabrIndividualCardDoesNotCollectRelatedVacancies(t *testing.T) {
 	body, err := os.ReadFile("testdata/habr-job.html")
 	if err != nil {

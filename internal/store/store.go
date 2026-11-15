@@ -550,7 +550,9 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 		values := make([]string, 0, len(item.values))
 		for _, value := range item.values {
 			value = strings.ToLower(strings.TrimSpace(value))
-			if value != "" {
+			if item.column == "level" && (value == "unknown" || value == "не указан") {
+				values = append(values, "")
+			} else if value != "" {
 				values = append(values, value)
 			}
 		}
@@ -563,7 +565,7 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 			// A posting can publish several languages in one comma-separated field.
 			conditions = append(conditions, fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(string_to_array(language, ',')) AS value WHERE lower(trim(value))=ANY($%d::text[]))", position))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("%s<>'' AND lower(%s)=ANY($%d::text[])", item.column, item.column, position))
+			conditions = append(conditions, fmt.Sprintf("lower(%s)=ANY($%d::text[])", item.column, position))
 		}
 	}
 	if filter.Cursor > 0 {

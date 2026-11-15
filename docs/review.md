@@ -1,23 +1,24 @@
 # Independent implementation audit
 
-Date: 2026-11-04. Reviewer: GPT-6 Luna, reasoning effort High. Scope: source, tests, AGENTS.md, specification, README and uncommitted changes present during review. The reviewer performed a read-only review; verification commands below were run separately by the implementing agent. This review does not certify that the complete specification is implemented.
+## Release status, 2026-11-15
 
-## Outstanding findings
+GPT-6 Luna (High) reviewed the source, tests, AGENTS.md, specification and README at `d0ca98a`. The reviewer found no release-blocking defect in the reviewed API authentication, scheduling, source-fetching or closure paths. Read-only GitHub metadata confirmed that `kkonstantin08/CareerRadar` is public. The reviewer did not run tests or access private credentials.
 
-- **P1 — Incomplete collector and filters (partially addressed 2026-11-05).** The collector now retains a title and explicit apply link from limited non-JSON-LD job pages, handles JSON-LD location/employment type arrays, and reads Greenhouse location. Workload, salary, level, language, direction and program type are still unavailable on many pages. Reproduce with an unsupported language, specialization, workload or compensation representation: the missing facts remain unknown. Continue adding verified field mappings for supported sources without guessing.
-- **P1 — Limited automatic confirmation of closure (partially addressed 2026-11-05).** Individual Jobicy URLs use its explicit status response; individual Greenhouse URLs use `404` from the exact public API endpoint; Lever now checks the exact individual page for an unredirected `404` only after its ID is absent from the public feed. Board-level absence and signals from other providers remain unsupported. Unknown statuses, redirects and failed sources do not establish closure.
-- **Addressed — Discovery results were transient.** The web search now persists attributed Remotive results; the associated source remains disabled.
-- **Addressed — Telegram update crash window.** Account linking, status changes and source mutations now commit with the update acknowledgement. Manual checks use a durable queue; owner responses use the notification outbox. Automated recovery can repeat an interrupted check, so source checks and notifications remain idempotent.
-- **Addressed — Uncertain notification delivery lacked an operator workflow.** Stale sends are now marked unknown and the History screen offers explicit resolution or retry with a duplicate warning.
-- **P2 — Remaining interface and integration gaps.** Presentation, source coverage and full Telegram/web parity are incomplete. The actual Telegram bot, full mobile workflows and a clean-machine deployment have not been exercised.
+| Severity | Remaining limit | How to observe it |
+| --- | --- | --- |
+| P1 coverage | Collection requires accessible HTML, published structured data or a supported public API. JavaScript-only sources without one of those inputs need a compatible collector. | Register a page that publishes its vacancies only after running client-side JavaScript and has no supported public feed. The check reports attention and preserves previous observations. See `internal/collector/fetch.go`. |
+| P2 coverage | Automatic closure requires individual publication evidence supported by Habr Career, Jobicy, Greenhouse or Lever. | Remove a posting from a public board snapshot or respond with an access error. The saved record stays open. See `internal/monitor/monitor.go` and `internal/store/closure.go`. |
+| Acceptance | The owner confirmed Telegram linking, three basic commands and one vacancy notification. The remaining commands have controlled integration tests. | Send `/search Go` in the linked chat and verify its reply and persisted results. Physical-phone use and external HTTPS deployment also require their target environments. |
+
+Global discovery persists attributed Habr Career results without enabling new sources. Remotive was removed. Source and status mutations commit with Telegram update acknowledgements. Owner replies use the durable outbox, and the cabinet can resolve an uncertain send or explicitly request retry. The dated sections below retain the original observations and their follow-ups.
 
 ## Fixed during development
 
-The latest review identified missing OpenAPI response fields for hours, salary, currency and closure. `internal/server/openapi.json` now documents them and `TestOpenAPIDocumentsJobFields` checks their presence.
+The initial review identified missing OpenAPI response fields for hours, salary, currency and closure. `internal/server/openapi.json` now documents them and `TestOpenAPIDocumentsJobFields` checks their presence.
 
 Previous independent reviews identified loss of evidence on source deletion, unsafe merging of multiple postings without URLs, overlapping source checks, incorrect redirect evidence and repeated alerts. The current code includes targeted changes and regression tests for these cases. This audit did not verify a production deployment.
 
-## Implementer verification
+## Initial implementer verification, 2026-11-04
 
 `TEST_DATABASE_URL=... go test -race -count=1 ./...`, `go vet ./...` and `go build ./...` passed against an isolated local PostgreSQL instance. Greenhouse and Remotive smoke tests succeeded earlier in this task. A 390 px catalog view was visually checked; other mobile flows remain unverified. No live Telegram credentials were available.
 
@@ -346,3 +347,11 @@ GPT-6 Luna (High) reviewed the shared path and reported no concrete defect. The 
 SmartRecruiters boards and individual jobs now use the provider's public API. A board check is bounded to three pages of five postings, retains successful detail results and reports partial data. Individual posting links and application links must match the employer and posting ID. The stable ID preserves a single job record when the title slug changes. Missing pages, including HTTP 404, do not provide closure evidence.
 
 GPT-6 Luna (High) identified a mismatch with the documented response shape. The adapter now accepts responses with no visibility field on the unauthenticated public endpoints, while rejecting explicit non-public values. Regression tests cover the documented response, pagination, a failing detail fetch, conflicting links, non-public records, and PostgreSQL alias persistence. The full PostgreSQL race suite, vet and build passed. A real Bosch board check through REST saved 15 open vacancies with API provenance and produced a page-limit warning in a disposable schema. A real individual posting also passed the collector smoke. No generic browser renderer was introduced.
+
+## Release fixes, 2026-11-15
+
+A real Yandex card returned a page-limit warning because the collector followed unrelated vacancy and navigation links after reading the card. The collector now accepts observations from the exact Yandex card path and stops at the card. GPT-6 Luna (High) reviewed the change and found that redirects from that path could still substitute a board or another vacancy. Both redirects now produce an attention warning and save no substitute record. Controlled regression tests cover exact-card provenance, board discovery and both redirect cases. The catalog level filter also accepts `unknown` and `Не указан`, alone or with known levels. Its authenticated REST integration test uses PostgreSQL and checks the new filter with pagination and other facets.
+
+The Yandex collector smoke returned one open record. A local run with an empty database verified migrations, HTTP Basic authentication, the cabinet, OpenAPI and Swagger, duplicate-free CSV import, source confirmation, two real checks, single-vacancy and single-revision persistence, evidence, the unknown-level filter and the application status through REST. An independent Habr monitor smoke verified one saved record with no duplicate revisions or notifications on repeat. Habr global RSS search for `Go` returned 20 relevant results. The direct Ozon Tech and Ozon career requests hit a redirect loop in this environment. These checks used disposable PostgreSQL state and exercised no live Telegram commands.
+
+After the redirect fix, `go test -race -count=1 ./...` passed with a fresh PostgreSQL test database. `go vet ./...`, `go build ./...`, OpenAPI JSON validation and `git diff --check` passed.

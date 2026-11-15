@@ -209,6 +209,19 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			problem = err
 			continue
 		}
+		pageURL, err := url.Parse(actual)
+		if err != nil {
+			problem = err
+			continue
+		}
+		habrCard, yandexCard := habrVacancyURL(pageURL), yandexVacancyURL(pageURL)
+		if actual != current.url {
+			requested, _ := url.Parse(current.url)
+			if yandexVacancyURL(requested) && (!yandexCard || strings.Trim(requested.Path, "/") != strings.Trim(pageURL.Path, "/")) {
+				problem = errors.New("unexpected Yandex vacancy redirect; source requires attention")
+				continue
+			}
+		}
 		extracted, err := Parse(bytes.NewReader(body), actual)
 		if err != nil {
 			problem = err
@@ -224,14 +237,7 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 				}
 			}
 		}
-		pageURL, err := url.Parse(actual)
-		if err != nil {
-			problem = err
-			continue
-		}
-		if len(extracted) == 0 && likelyJobDetail(pageURL) && problem == nil {
-			problem = errors.New("job page has no extractable vacancy; source requires attention")
-		}
+		before := len(found)
 		for _, j := range extracted {
 			jobPage := pageURL
 			if j.URL == "" {
@@ -254,7 +260,10 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 				j.URL = resolved.String()
 				jobPage = resolved
 			}
-			if habrVacancyURL(pageURL) && (!habrVacancyURL(jobPage) || strings.Trim(jobPage.Path, "/") != strings.Trim(pageURL.Path, "/")) {
+			if habrCard && (!habrVacancyURL(jobPage) || strings.Trim(jobPage.Path, "/") != strings.Trim(pageURL.Path, "/")) {
+				continue
+			}
+			if yandexCard && (!yandexVacancyURL(jobPage) || strings.Trim(jobPage.Path, "/") != strings.Trim(pageURL.Path, "/")) {
 				continue
 			}
 			if len(extracted) == 1 && j.URL == actual {
@@ -267,15 +276,14 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			}
 			found = append(found, j)
 		}
-		// An individual Habr card's related links are different jobs, not additional details of this one.
-		if current.depth >= 2 || id != "" || habrVacancyURL(pageURL) {
+		if len(found) == before && likelyJobDetail(pageURL) && problem == nil {
+			problem = errors.New("job page has no extractable vacancy; source requires attention")
+		}
+		// Individual cards on these sites link to unrelated jobs and broad category pages.
+		if current.depth >= 2 || id != "" || habrCard || yandexCard {
 			continue
 		}
-		base, err := url.Parse(actual)
-		if err != nil {
-			continue
-		}
-		for _, link := range relevantLinks(body, base) {
+		for _, link := range relevantLinks(body, pageURL) {
 			if !seen[link] && len(seen) < 20 {
 				seen[link] = true
 				queue = append(queue, page{link, current.depth + 1})
@@ -390,8 +398,28 @@ func habrVacancyURL(u *url.URL) bool {
 	return err == nil && id > 0 && strconv.FormatUint(id, 10) == parts[1]
 }
 
+func yandexVacancyURL(u *url.URL) bool {
+	if u == nil || u.Scheme != "https" || u.Hostname() != "yandex.ru" || u.User != nil || u.RawPath != "" || (u.Port() != "" && u.Port() != "443") {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 3 || parts[0] != "jobs" || parts[1] != "vacancies" {
+		return false
+	}
+	slug, id, ok := strings.Cut(parts[2], "-")
+	if !ok || slug == "" {
+		return false
+	}
+	id = id[strings.LastIndexByte(id, '-')+1:]
+	n, err := strconv.ParseUint(id, 10, 53)
+	return err == nil && n > 0 && strconv.FormatUint(n, 10) == id
+}
+
 // likelyJobDetail excludes common listing routes from conservative page warnings.
 func likelyJobDetail(u *url.URL) bool {
+	if u.Hostname() == "yandex.ru" && strings.HasPrefix(u.Path, "/jobs/") {
+		return yandexVacancyURL(u)
+	}
 	if !individualJobURL(u) {
 		return false
 	}

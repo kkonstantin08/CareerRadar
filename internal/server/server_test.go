@@ -101,14 +101,25 @@ func TestJobsEndpointAppliesCatalogFilters(t *testing.T) {
 	defer db.DeleteSource(ctx, source.ID)
 	for _, item := range []store.Observation{
 		{SourceID: source.ID, URL: base + "/1", Title: "Backend", Company: company, Direction: "Backend", Language: "Python, Go"},
-		{SourceID: source.ID, URL: base + "/2", Title: "Backend second", Company: company, Direction: "Backend", Language: "Go"},
-		{SourceID: source.ID, URL: base + "/3", Title: "QA", Company: company, Direction: "QA", Language: "Python"},
+		{SourceID: source.ID, URL: base + "/2", Title: "Backend second", Company: company, Direction: "Backend", Language: "Go", Level: "Junior"},
+		{SourceID: source.ID, URL: base + "/3", Title: "QA", Company: company, Direction: "QA", Language: "Python", Level: "Senior"},
 	} {
 		if _, err = db.Observe(ctx, item); err != nil {
 			t.Fatal(err)
 		}
 	}
-	path := "/api/jobs?company=" + url.QueryEscape(company) + "&direction=Backend&direction=Data+Engineering&language=Go&limit=1"
+	companyPath := "/api/jobs?company=" + url.QueryEscape(company)
+	for _, level := range []string{"unknown", "Не указан"} {
+		req := httptest.NewRequest(http.MethodGet, companyPath+"&level="+url.QueryEscape(level), nil)
+		req.SetBasicAuth("owner", "secret")
+		w := httptest.NewRecorder()
+		New(db, "owner", "secret").ServeHTTP(w, req)
+		var got []store.Job
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || got[0].URL != base+"/1" {
+			t.Fatalf("level %q: %d %s", level, w.Code, w.Body.String())
+		}
+	}
+	path := companyPath + "&direction=Backend&direction=Data+Engineering&language=Go&level=Junior&level=unknown&limit=1"
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.SetBasicAuth("owner", "secret")
 	w := httptest.NewRecorder()

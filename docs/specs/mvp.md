@@ -21,3 +21,5 @@ Telegram `/find <company name>` uses the shared company discovery logic, display
 Telegram `/search <query>` and web discovery POST share the same search and persistence service. Telegram shows a bounded reply with primary vacancy links and suggests company discovery via `/find`. New sources remain disabled.
 
 SmartRecruiters public company boards and individual job URLs use the provider Posting API. Board checks read at most three pages of five public postings with verified detail URLs, flag incomplete results, and retain successfully verified observations. Posting IDs within each employer are used as stable aliases. An unavailable or absent posting does not establish closure.
+
+Individual Yandex vacancy cards use the published structured data at the exact card path. Related job links are excluded from that check. Listing pages still use the bounded crawl. The catalog level filter accepts `unknown` and `Не указан` for missing levels, including in combination with known levels.
