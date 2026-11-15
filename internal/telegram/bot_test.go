@@ -738,3 +738,28 @@ func TestSourceListShowsAttentionReason(t *testing.T) {
 		t.Fatalf("reply %q", reply)
 	}
 }
+
+func TestOwnerCanSearchGlobalVacancies(t *testing.T) {
+	f := &fakeData{fakeLinks: fakeLinks{linked: 5}}
+	b := New(f)
+	calls := 0
+	b.searchVacancies = func(_ context.Context, q string) ([]discovery.Result, error) {
+		calls++
+		if q != "Go Backend" {
+			t.Errorf("query %q", q)
+		}
+		return []discovery.Result{{Title: "Go Engineer", Company: "Example", URL: "https://career.habr.com/vacancies/1000000001", Source: discovery.SourceName, Problem: "Не хватает сведений"}}, nil
+	}
+	if reply := b.Handle(context.Background(), Message{ChatID: 6, UserID: 6, ChatType: "private", Text: "  /search Go Backend  "}); reply != "" || calls != 0 {
+		t.Fatalf("unauthorized reply=%q calls=%d", reply, calls)
+	}
+	reply := b.Handle(context.Background(), Message{ChatID: 5, UserID: 5, ChatType: "private", Text: "  /search Go Backend  "})
+	for _, want := range []string{"Go Engineer", "Example", "https://career.habr.com/vacancies/1000000001", "Не хватает сведений", "/find"} {
+		if !strings.Contains(reply, want) {
+			t.Errorf("missing %q in %q", want, reply)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d", calls)
+	}
+}

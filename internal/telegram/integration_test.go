@@ -171,7 +171,7 @@ func TestSourceWarningDeliveredOnceThroughOutbox(t *testing.T) {
 	}
 }
 
-func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
+func TestSearchCommandsQueueRepliesAndIgnoreRepeatedUpdates(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -212,6 +212,11 @@ func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
 		searches++
 		return []discovery.CompanyResult{{Name: "Example", Homepage: "https://example.org", CareerURLs: []string{"https://example.org/careers"}}}, nil
 	}
+	vacancySearches := 0
+	bot.SetSearch(func(context.Context, string) ([]discovery.Result, error) {
+		vacancySearches++
+		return []discovery.Result{{Title: "Go Engineer", URL: "https://career.habr.com/vacancies/1000000001"}}, nil
+	})
 	pollCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	calls := 0
@@ -226,12 +231,13 @@ func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
 			return
 		}
 		update := map[string]any{"update_id": 42, "message": map[string]any{"chat": map[string]any{"id": 123, "type": "private"}, "from": map[string]any{"id": 123}, "text": "/find Example"}}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{update, update}})
+		vacancyUpdate := map[string]any{"update_id": 43, "message": map[string]any{"chat": map[string]any{"id": 123, "type": "private"}, "from": map[string]any{"id": 123}, "text": "/search Go"}}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{update, update, vacancyUpdate, vacancyUpdate}})
 	}))
 	defer srv.Close()
 	bot.poll(pollCtx, srv.Client(), srv.URL, "TEST")
-	if searches != 1 {
-		t.Fatalf("duplicate update triggered %d searches", searches)
+	if searches != 1 || vacancySearches != 1 {
+		t.Fatalf("search calls: companies=%d vacancies=%d", searches, vacancySearches)
 	}
 	check, err := sql.Open("pgx", u.String())
 	if err != nil {
@@ -241,6 +247,9 @@ func TestCompanySearchCommandQueuesReplyWithoutAddingSource(t *testing.T) {
 	var message, state string
 	if err = check.QueryRowContext(ctx, `SELECT message,state FROM notifications WHERE event_key='telegram-reply:42'`).Scan(&message, &state); err != nil || state != "pending" || !strings.Contains(message, "https://example.org/careers") {
 		t.Fatalf("reply=%q state=%q error=%v", message, state, err)
+	}
+	if err = check.QueryRowContext(ctx, `SELECT message,state FROM notifications WHERE event_key='telegram-reply:43'`).Scan(&message, &state); err != nil || state != "pending" || !strings.Contains(message, "https://career.habr.com/vacancies/1000000001") {
+		t.Fatalf("vacancy reply=%q state=%q error=%v", message, state, err)
 	}
 	sources, err := db.Sources(ctx)
 	if err != nil || len(sources) != 0 {

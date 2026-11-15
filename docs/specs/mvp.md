@@ -17,3 +17,5 @@ Individual Habr vacancy cards use JobPosting JSON-LD. Normalize that provider's 
 Global search may apply verified Habr archive evidence only to an already saved vacancy. Unknown archived listings are not created; incomplete checks do not reopen a vacancy and owner closures remain intact. Discovery does not enable source monitoring.
 
 Telegram `/find <company name>` uses the shared company discovery logic, displays candidate career links and incomplete-search warnings, and never creates or enables a source. Adding and confirming a candidate remains explicit.
+
+Telegram `/search <query>` and web discovery POST share the same search and persistence service. Telegram shows a bounded reply with primary vacancy links and suggests company discovery via `/find`. New sources remain disabled.

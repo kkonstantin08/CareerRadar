@@ -515,7 +515,7 @@
             "description": "Invalid query"
           },
           "408": {
-            "description": "Search cancelled while waiting for another Habr update"
+            "description": "Search cancelled or timed out while waiting, searching or saving results"
           },
           "502": {
             "description": "Search unavailable"

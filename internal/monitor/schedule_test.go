@@ -1132,3 +1132,68 @@ func TestPartialCrawlKeepsVacancyAndDeduplicatesWarning(t *testing.T) {
 		t.Fatalf("warnings=%d error=%v", n, err)
 	}
 }
+
+func TestGlobalSearchSavesResultsWithoutEnablingSource(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("botsearch_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fixture, err := os.ReadFile("../collector/testdata/habr-job.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: monitorTransport(func(r *http.Request) (*http.Response, error) {
+		body := string(fixture)
+		if r.URL.Path == "/vacancies/rss" {
+			body = `<rss><channel><item><title>Go Engineer</title><author>Example</author><link>https://career.habr.com/vacancies/1000000001</link><description>Go</description></item></channel></rss>`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	svc := New(db, nil)
+	for range 2 {
+		items, err := svc.Discover(ctx, "Go", client)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("items=%+v err=%v", items, err)
+		}
+	}
+	jobs, err := db.Jobs(ctx)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs=%+v err=%v", jobs, err)
+	}
+	sources, err := db.Sources(ctx)
+	if err != nil || len(sources) != 1 || sources[0].Enabled {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	sqlDB, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	var revisions, notifications int
+	if err = sqlDB.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM job_history), (SELECT count(*) FROM notifications WHERE event_key LIKE 'job:%')`).Scan(&revisions, &notifications); err != nil || revisions != 1 || notifications != 1 {
+		t.Fatalf("revisions=%d notifications=%d err=%v", revisions, notifications, err)
+	}
+}

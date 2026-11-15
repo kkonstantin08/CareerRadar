@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kkonstantin08/CareerRadar/internal/collector"
+	"github.com/kkonstantin08/CareerRadar/internal/discovery"
 	"github.com/kkonstantin08/CareerRadar/internal/monitor"
 	"github.com/kkonstantin08/CareerRadar/internal/server"
 	"github.com/kkonstantin08/CareerRadar/internal/store"
@@ -58,6 +59,9 @@ func main() {
 			log.Fatal(err)
 		}
 		bot.SetCheck(checks.Check)
+		bot.SetSearch(func(ctx context.Context, query string) ([]discovery.Result, error) {
+			return checks.Discover(ctx, query, client)
+		})
 		go bot.Run(ctx, token)
 		go telegram.Deliver(ctx, db, token)
 	}

@@ -31,10 +31,11 @@ type Message struct {
 
 // Bot handles messages from the linked owner.
 type Bot struct {
-	links       links
-	check       func(context.Context, int64) (string, error)
-	findCompany func(context.Context, string) ([]discovery.CompanyResult, error)
-	cabinetURL  string
+	links           links
+	check           func(context.Context, int64) (string, error)
+	findCompany     func(context.Context, string) ([]discovery.CompanyResult, error)
+	searchVacancies func(context.Context, string) ([]discovery.Result, error)
+	cabinetURL      string
 }
 
 type dataStore interface {
@@ -48,6 +49,11 @@ type dataStore interface {
 
 // SetCheck connects manual checks to the shared monitoring service.
 func (b *Bot) SetCheck(check func(context.Context, int64) (string, error)) { b.check = check }
+
+// SetSearch connects global vacancy search to the shared application service.
+func (b *Bot) SetSearch(search func(context.Context, string) ([]discovery.Result, error)) {
+	b.searchVacancies = search
+}
 
 // SetCabinetURL configures an externally reachable HTTPS address for the web cabinet.
 func (b *Bot) SetCabinetURL(raw string) error {
@@ -109,7 +115,43 @@ func (b *Bot) handle(ctx context.Context, m Message) (string, error) {
 		return "", nil
 	}
 	if parts[0] == "/help" || parts[0] == "/start" {
-		return "Команды: /jobs [ID], /sources [ID] (продолжение списков), /cabinet, /find название компании, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+		return "Команды: /jobs [ID], /sources [ID] (продолжение списков), /cabinet, /search запрос, /find название компании, /add URL название, /confirm ID, /disable ID, /edit ID URL название, /delete ID, /check ID, /status ID номер. Статусы: 1 — не откликался, 2 — откликнулся, 3 — тестовое, 4 — собеседование, 5 — оффер, 6 — отказ.", nil
+	}
+	if parts[0] == "/search" {
+		query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m.Text), "/search"))
+		if n := utf8.RuneCountInString(query); n < 2 || n > 100 {
+			return "Используйте /search запрос (от 2 до 100 символов).", nil
+		}
+		if b.searchVacancies == nil {
+			return "Глобальный поиск недоступен.", nil
+		}
+		results, err := b.searchVacancies(ctx, query)
+		if err != nil {
+			return "Не удалось выполнить глобальный поиск; повторите попытку позже.", nil
+		}
+		if len(results) == 0 {
+			return "По запросу ничего не найдено.", nil
+		}
+		var out strings.Builder
+		out.WriteString("Результаты глобального поиска:\n")
+		for _, r := range results {
+			line := shortText(r.Title, 120) + " · " + shortText(r.Company, 100) + "\n" + displayURL(r.URL) + "\n"
+			if r.Archived {
+				line += "Вакансия в архиве\n"
+			}
+			if r.Problem != "" {
+				line += "Требует внимания: " + shortText(r.Problem, 100) + "\n"
+			}
+			if r.Company != "" {
+				line += "Найти компанию: /find " + shortText(r.Company, 100) + "\n"
+			}
+			if out.Len()+len(line) > 2800 {
+				out.WriteString("Результаты сокращены. Повторите глобальный поиск в кабинете.\n")
+				break
+			}
+			out.WriteString(line)
+		}
+		return out.String(), nil
 	}
 	if parts[0] == "/find" {
 		name := strings.TrimSpace(strings.TrimPrefix(m.Text, "/find"))

@@ -100,19 +100,16 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 			http.Error(w, "invalid search query", 400)
 			return
 		}
-		release, err := checks.LockHabr(r.Context())
+		results, err := checks.Discover(r.Context(), input.Query, collector.Client())
 		if err != nil {
-			http.Error(w, "search cancelled", http.StatusRequestTimeout)
-			return
-		}
-		defer release()
-		results, err := discovery.Search(r.Context(), collector.Client(), input.Query)
-		if err != nil {
-			http.Error(w, "global search unavailable", 502)
-			return
-		}
-		if err = db.SaveDiscovered(r.Context(), results); err != nil {
-			http.Error(w, "could not save discovery results", 500)
+			switch {
+			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				http.Error(w, "search cancelled", http.StatusRequestTimeout)
+			case errors.Is(err, monitor.ErrDiscoveryUnavailable):
+				http.Error(w, "global search unavailable", http.StatusBadGateway)
+			default:
+				http.Error(w, "could not save discovery results", http.StatusInternalServerError)
+			}
 			return
 		}
 		writeJSON(w, 200, results)
