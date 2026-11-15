@@ -14,7 +14,13 @@ func PostingURL(raw string) string {
 		return posting
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() != "jobs.ashbyhq.com" || u.User != nil || u.RawPath != "" || (u.Port() != "" && u.Port() != "443") {
+	if err != nil {
+		return ""
+	}
+	if company, id := smartRecruitersPath(u); id != "" {
+		return "https://jobs.smartrecruiters.com/" + strings.ToLower(company) + "/" + id
+	}
+	if u.Scheme != "https" || u.Hostname() != "jobs.ashbyhq.com" || u.User != nil || u.RawPath != "" || (u.Port() != "" && u.Port() != "443") {
 		return ""
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")

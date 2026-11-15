@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/kkonstantin08/CareerRadar/internal/collector"
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
 )
@@ -229,6 +230,9 @@ func careerLinks(ctx context.Context, client *http.Client, home *url.URL) ([]str
 func supportedCareerBoard(u *url.URL) bool {
 	if u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") || u.RawPath != "" {
 		return false
+	}
+	if collector.SmartRecruitersBoard(u) {
+		return true
 	}
 	switch u.Hostname() {
 	case "jobs.lever.co", "jobs.ashbyhq.com", "boards.greenhouse.io", "job-boards.greenhouse.io":

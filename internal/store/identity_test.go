@@ -395,3 +395,29 @@ func TestHabrArchiveClosureAndReopeningAreIdempotent(t *testing.T) {
 		t.Fatalf("owner closure lost %+v err=%v", d, err)
 	}
 }
+
+func TestSmartRecruitersTitleSlugChangeKeepsOneVacancy(t *testing.T) {
+	db := identityTestStore(t)
+	ctx := context.Background()
+	source, err := db.AddSource(ctx, "Example", "https://careers.smartrecruiters.com/Example", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const evidence = "https://api.smartrecruiters.com/v1/companies/Example/postings/101"
+	for _, observation := range []Observation{
+		{SourceID: source.ID, PageURL: evidence, URL: "https://jobs.smartrecruiters.com/Example/101-old-title", Title: "Developer"},
+		{SourceID: source.ID, PageURL: evidence, URL: "https://jobs.smartrecruiters.com/Example/101-new-title", Title: "Go Developer"},
+	} {
+		if _, err := db.Observe(ctx, observation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	jobs, err := db.Jobs(ctx)
+	if err != nil || len(jobs) != 1 || jobs[0].Title != "Go Developer" {
+		t.Fatalf("jobs=%+v err=%v", jobs, err)
+	}
+	details, err := db.Details(ctx, jobs[0].ID)
+	if err != nil || len(details.History) != 2 {
+		t.Fatalf("details=%+v err=%v", details, err)
+	}
+}

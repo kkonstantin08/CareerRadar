@@ -120,6 +120,9 @@ func fetch(ctx context.Context, client *http.Client, rawURL, status string) ([]J
 			return nil, errors.New("Jobicy status unknown; source requires attention")
 		}
 	}
+	if company, posting := smartRecruitersPath(root); company != "" {
+		return fetchSmartRecruiters(ctx, client, company, posting)
+	}
 	if api := greenhouseURL(root); api != "" {
 		body, _, err := readPage(ctx, client, api)
 		var responseErr *httpStatusError

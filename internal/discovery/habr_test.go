@@ -181,7 +181,7 @@ func TestSearchDeduplicatesFeedBeforeResultLimit(t *testing.T) {
 
 func TestCompanyCareerLinksIncludeExplicitSupportedBoards(t *testing.T) {
 	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
-		body := `<a href="https://jobs.lever.co:443/example?source=homepage">Join us</a><a href="https://jobs.ashbyhq.com/example">Open positions</a><a href="https://boards.greenhouse.io/example">Our team</a><a href="https://jobs.lever.co.evil.test/example">Jobs</a>`
+		body := `<a href="https://jobs.lever.co:443/example?source=homepage">Join us</a><a href="https://jobs.ashbyhq.com/example">Open positions</a><a href="https://boards.greenhouse.io/example">Our team</a><a href="https://jobs.lever.co.evil.test/example">Jobs</a><a href="https://careers.smartrecruiters.com/Example">Our positions</a>`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	home, err := url.Parse("https://example.com/")
@@ -189,7 +189,7 @@ func TestCompanyCareerLinksIncludeExplicitSupportedBoards(t *testing.T) {
 		t.Fatal(err)
 	}
 	links, err := careerLinks(context.Background(), client, home)
-	if err != nil || len(links) != 3 || links[0] != "https://jobs.lever.co/example" {
+	if err != nil || len(links) != 4 || links[0] != "https://jobs.lever.co/example" || links[3] != "https://careers.smartrecruiters.com/Example" {
 		t.Fatalf("links=%v err=%v", links, err)
 	}
 }

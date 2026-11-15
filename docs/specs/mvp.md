@@ -19,3 +19,5 @@ Global search may apply verified Habr archive evidence only to an already saved 
 Telegram `/find <company name>` uses the shared company discovery logic, displays candidate career links and incomplete-search warnings, and never creates or enables a source. Adding and confirming a candidate remains explicit.
 
 Telegram `/search <query>` and web discovery POST share the same search and persistence service. Telegram shows a bounded reply with primary vacancy links and suggests company discovery via `/find`. New sources remain disabled.
+
+SmartRecruiters public company boards and individual job URLs use the provider Posting API. Board checks read at most three pages of five public postings with verified detail URLs, flag incomplete results, and retain successfully verified observations. Posting IDs within each employer are used as stable aliases. An unavailable or absent posting does not establish closure.
