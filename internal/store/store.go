@@ -37,27 +37,28 @@ type Source struct {
 
 // Observation records facts published at a job URL.
 type Observation struct {
-	SourceID          int64  `json:"source_id"`
-	CheckOrder        int64  `json:"-"`
-	PageURL           string `json:"page_url"`
-	URL               string `json:"url"`
-	ApplyURL          string `json:"apply_url"`
-	Title             string `json:"title"`
-	Company           string `json:"company"`
-	Description       string `json:"description"`
-	Deadline          string `json:"deadline"`
-	Location          string `json:"location"`
-	LocationUncertain bool   `json:"-"`
-	WorkMode          string `json:"work_mode"`
-	Type              string `json:"type"`
-	Level             string `json:"level"`
-	Direction         string `json:"direction"`
-	Language          string `json:"language"`
-	Hours             *int   `json:"hours"`
-	Salary            *int64 `json:"salary"`
-	SalaryMin         *int64 `json:"salary_min"`
-	SalaryMax         *int64 `json:"salary_max"`
-	Currency          string `json:"currency"`
+	SourceID           int64    `json:"source_id"`
+	CheckOrder         int64    `json:"-"`
+	PageURL            string   `json:"page_url"`
+	URL                string   `json:"url"`
+	ApplyURL           string   `json:"apply_url"`
+	Title              string   `json:"title"`
+	Company            string   `json:"company"`
+	Description        string   `json:"description"`
+	Deadline           string   `json:"deadline"`
+	Location           string   `json:"location"`
+	LocationUncertain  bool     `json:"-"`
+	ApplicantLocations []string `json:"applicant_locations"`
+	WorkMode           string   `json:"work_mode"`
+	Type               string   `json:"type"`
+	Level              string   `json:"level"`
+	Direction          string   `json:"direction"`
+	Language           string   `json:"language"`
+	Hours              *int     `json:"hours"`
+	Salary             *int64   `json:"salary"`
+	SalaryMin          *int64   `json:"salary_min"`
+	SalaryMax          *int64   `json:"salary_max"`
+	Currency           string   `json:"currency"`
 	// RSS fallbacks may create records but must not replace cached card observations.
 	createOnly      bool
 	initialFallback *Observation
@@ -69,6 +70,11 @@ type Job struct {
 	ID     int64  `json:"id"`
 	Status string `json:"status"`
 	Closed bool   `json:"closed"`
+}
+
+// MatchPreferences applies the same published facts in the catalog and notifications.
+func (x Observation) MatchPreferences(p jobs.Preferences) jobs.Match {
+	return p.Match(jobs.Job{Company: x.Company, Location: x.Location, ApplicantLocations: x.ApplicantLocations, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level, Direction: x.Direction, Language: x.Language, Hours: x.Hours, Salary: x.Salary, SalaryMin: x.SalaryMin, SalaryMax: x.SalaryMax, Currency: x.Currency})
 }
 
 // Open connects to PostgreSQL and creates the initial schema if necessary.
@@ -101,7 +107,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (checksum BYTEA PRIMARY KEY)`); err != nil {
 		return err
 	}
-	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters, migrations.JobAliases, migrations.ObservationOrder} {
+	for _, migration := range []string{migrations.Initial, migrations.CatalogFilters, migrations.JobAliases, migrations.ObservationOrder, migrations.ApplicantLocations} {
 		sum := sha256.Sum256([]byte(migration))
 		var exists bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE checksum=$1)`, sum[:]).Scan(&exists); err != nil {
@@ -229,7 +235,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	}
 	var id int64
 	var old Observation
-	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,monthly_salary_min,monthly_salary_max,salary_currency,direction,language,apply_url FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level, &old.Hours, &old.Salary, &old.SalaryMin, &old.SalaryMax, &old.Currency, &old.Direction, &old.Language, &old.ApplyURL)
+	err = tx.QueryRowContext(ctx, `SELECT id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,monthly_salary_min,monthly_salary_max,salary_currency,direction,language,apply_url,applicant_locations FROM jobs WHERE url=$1 FOR UPDATE`, x.URL).Scan(&id, &old.Title, &old.Company, &old.Description, &old.Deadline, &old.Location, &old.WorkMode, &old.Type, &old.Level, &old.Hours, &old.Salary, &old.SalaryMin, &old.SalaryMax, &old.Currency, &old.Direction, &old.Language, &old.ApplyURL, &old.ApplicantLocations)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
@@ -263,6 +269,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 			// Empty location and title-derived facets may be deliberate uncertainty.
 			x.Location, x.Level, x.Type = old.Location, old.Level, old.Type
 			x.LocationUncertain = old.Location == ""
+			x.ApplicantLocations = old.ApplicantLocations
 			if old.Hours != nil {
 				x.Hours = old.Hours
 			}
@@ -299,7 +306,8 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 	if x.Level == "" && (x.Title == "" || x.Title == old.Title || old.Level == "Intern" && old.Type == "Internship" && (x.Type == "" || x.Type == "Internship")) {
 		x.Level = old.Level
 	}
-	if x.Location == "" && !x.LocationUncertain && !(x.WorkMode == "remote" && old.WorkMode != "" && old.WorkMode != "remote") {
+	locationScopeChanged := x.WorkMode != "" && old.WorkMode != "" && (x.WorkMode == "remote") != (old.WorkMode == "remote")
+	if x.Location == "" && !x.LocationUncertain && !locationScopeChanged {
 		x.Location = old.Location
 	}
 	for _, pair := range []struct {
@@ -309,6 +317,12 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		if *pair.current == "" {
 			*pair.current = pair.previous
 		}
+	}
+	if x.WorkMode != "remote" {
+		x.ApplicantLocations = nil
+	} else if x.ApplicantLocations == nil || len(x.ApplicantLocations) == 0 && len(old.ApplicantLocations) > 0 {
+		// An incomplete recheck cannot erase a previously confirmed set of applicant locations.
+		x.ApplicantLocations = old.ApplicantLocations
 	}
 	if x.Hours == nil {
 		x.Hours = old.Hours
@@ -325,9 +339,9 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		return false, errors.New("invalid salary range")
 	}
 	newJob := errors.Is(err, sql.ErrNoRows)
-	changed := !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || !reflect.DeepEqual(x.SalaryMin, old.SalaryMin) || !reflect.DeepEqual(x.SalaryMax, old.SalaryMax) || x.Currency != old.Currency || newJob || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.ApplyURL != old.ApplyURL || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level || x.Direction != old.Direction || x.Language != old.Language
+	changed := !reflect.DeepEqual(x.ApplicantLocations, old.ApplicantLocations) || !reflect.DeepEqual(x.Hours, old.Hours) || !reflect.DeepEqual(x.Salary, old.Salary) || !reflect.DeepEqual(x.SalaryMin, old.SalaryMin) || !reflect.DeepEqual(x.SalaryMax, old.SalaryMax) || x.Currency != old.Currency || newJob || x.Title != old.Title || x.Company != old.Company || x.Description != old.Description || x.Deadline != old.Deadline || x.ApplyURL != old.ApplyURL || x.Location != old.Location || x.WorkMode != old.WorkMode || x.Type != old.Type || x.Level != old.Level || x.Direction != old.Direction || x.Language != old.Language
 	if changed {
-		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,direction,language,monthly_salary_min,monthly_salary_max,apply_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,weekly_hours=EXCLUDED.weekly_hours,monthly_salary=EXCLUDED.monthly_salary,salary_currency=EXCLUDED.salary_currency,direction=EXCLUDED.direction,language=EXCLUDED.language,monthly_salary_min=EXCLUDED.monthly_salary_min,monthly_salary_max=EXCLUDED.monthly_salary_max,apply_url=EXCLUDED.apply_url,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level, x.Hours, x.Salary, x.Currency, x.Direction, x.Language, x.SalaryMin, x.SalaryMax, x.ApplyURL).Scan(&id)
+		err = tx.QueryRowContext(ctx, `INSERT INTO jobs(url,source_id,title,company,description,deadline,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,direction,language,monthly_salary_min,monthly_salary_max,apply_url,applicant_locations) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(url) DO UPDATE SET title=EXCLUDED.title,company=EXCLUDED.company,description=EXCLUDED.description,deadline=EXCLUDED.deadline,location=EXCLUDED.location,work_mode=EXCLUDED.work_mode,offer_type=EXCLUDED.offer_type,level=EXCLUDED.level,weekly_hours=EXCLUDED.weekly_hours,monthly_salary=EXCLUDED.monthly_salary,salary_currency=EXCLUDED.salary_currency,direction=EXCLUDED.direction,language=EXCLUDED.language,monthly_salary_min=EXCLUDED.monthly_salary_min,monthly_salary_max=EXCLUDED.monthly_salary_max,apply_url=EXCLUDED.apply_url,applicant_locations=EXCLUDED.applicant_locations,updated_at=now() RETURNING id`, x.URL, x.SourceID, x.Title, x.Company, x.Description, x.Deadline, x.Location, x.WorkMode, x.Type, x.Level, x.Hours, x.Salary, x.Currency, x.Direction, x.Language, x.SalaryMin, x.SalaryMax, x.ApplyURL, x.ApplicantLocations).Scan(&id)
 		if err != nil {
 			return false, err
 		}
@@ -343,7 +357,7 @@ func (s *Store) Observe(ctx context.Context, x Observation) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		match := prefs.Match(jobs.Job{Company: x.Company, Location: x.Location, WorkMode: x.WorkMode, Type: x.Type, Level: x.Level, Direction: x.Direction, Language: x.Language, Hours: x.Hours, Salary: x.Salary, SalaryMin: x.SalaryMin, SalaryMax: x.SalaryMax, Currency: x.Currency})
+		match := x.MatchPreferences(prefs)
 		if match != jobs.Unsuitable {
 			message := jobNotification(x, old, newJob, match == jobs.NeedsClarification)
 			if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(event_key,message) VALUES($1,$2) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("job:%d:revision:%d", id, revision), message); err != nil {
@@ -434,7 +448,7 @@ func jobNotification(current, previous Observation, isNew, needsClarification bo
 	if isNew {
 		lines = append(lines, "Дедлайн: "+short(current.Deadline))
 		for _, field := range []struct{ name, value string }{
-			{"География", current.Location}, {"Формат", current.WorkMode}, {"Уровень", current.Level}, {"Направление", current.Direction}, {"Языки", current.Language}, {"Тип", current.Type},
+			{"География", current.Location}, {"Регионы для удалённой работы", strings.Join(current.ApplicantLocations, "; ")}, {"Формат", current.WorkMode}, {"Уровень", current.Level}, {"Направление", current.Direction}, {"Языки", current.Language}, {"Тип", current.Type},
 		} {
 			if strings.TrimSpace(field.value) != "" {
 				lines = append(lines, field.name+": "+short(field.value))
@@ -448,7 +462,7 @@ func jobNotification(current, previous Observation, isNew, needsClarification bo
 		}
 	} else {
 		for _, field := range []struct{ name, old, current string }{
-			{"Название", previous.Title, current.Title}, {"Компания", previous.Company, current.Company}, {"Дедлайн", previous.Deadline, current.Deadline}, {"География", previous.Location, current.Location}, {"Формат", previous.WorkMode, current.WorkMode}, {"Уровень", previous.Level, current.Level}, {"Направление", previous.Direction, current.Direction}, {"Языки", previous.Language, current.Language}, {"Тип", previous.Type, current.Type},
+			{"Название", previous.Title, current.Title}, {"Компания", previous.Company, current.Company}, {"Дедлайн", previous.Deadline, current.Deadline}, {"География", previous.Location, current.Location}, {"Регионы для удалённой работы", strings.Join(previous.ApplicantLocations, "; "), strings.Join(current.ApplicantLocations, "; ")}, {"Формат", previous.WorkMode, current.WorkMode}, {"Уровень", previous.Level, current.Level}, {"Направление", previous.Direction, current.Direction}, {"Языки", previous.Language, current.Language}, {"Тип", previous.Type, current.Type},
 		} {
 			if field.old != field.current {
 				lines = append(lines, field.name+": "+short(field.old)+" → "+short(field.current))
@@ -552,6 +566,8 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 			value = strings.ToLower(strings.TrimSpace(value))
 			if item.column == "level" && (value == "unknown" || value == "не указан") {
 				values = append(values, "")
+			} else if item.column == "location" && value != "" {
+				values = append(values, jobs.LocationAliases(value)...)
 			} else if value != "" {
 				values = append(values, value)
 			}
@@ -561,10 +577,21 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 		}
 		args = append(args, values)
 		position := len(args)
-		if item.column == "language" {
+		switch item.column {
+		case "language":
 			// A posting can publish several languages in one comma-separated field.
 			conditions = append(conditions, fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(string_to_array(language, ',')) AS value WHERE lower(trim(value))=ANY($%d::text[]))", position))
-		} else {
+		case "location":
+			// Applicant areas supersede the office location for a remote posting.
+			var applicantValues []string
+			for _, value := range item.values {
+				if strings.TrimSpace(value) != "" {
+					applicantValues = append(applicantValues, jobs.ApplicantLocationAliases(value)...)
+				}
+			}
+			args = append(args, applicantValues)
+			conditions = append(conditions, fmt.Sprintf("((applicant_locations IS NULL AND lower(location)=ANY($%d::text[])) OR EXISTS (SELECT 1 FROM unnest(applicant_locations) AS value WHERE lower(trim(value))=ANY($%d::text[])))", position, len(args)))
+		default:
 			conditions = append(conditions, fmt.Sprintf("lower(%s)=ANY($%d::text[])", item.column, position))
 		}
 	}
@@ -572,7 +599,7 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 		args = append(args, filter.Cursor)
 		conditions = append(conditions, fmt.Sprintf("id<$%d", len(args)))
 	}
-	query := `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url FROM jobs WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY id DESC`
+	query := `SELECT id,COALESCE(source_id,0),url,title,company,description,deadline,status,location,work_mode,offer_type,level,weekly_hours,monthly_salary,salary_currency,closed,direction,language,monthly_salary_min,monthly_salary_max,apply_url,applicant_locations FROM jobs WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY id DESC`
 	if filter.Limit > 0 {
 		args = append(args, filter.Limit)
 		limitPosition := len(args)
@@ -586,7 +613,7 @@ func (s *Store) JobsFiltered(ctx context.Context, filter JobFilters) ([]Job, err
 	xs := []Job{}
 	for rows.Next() {
 		var x Job
-		if err := rows.Scan(&x.ID, &x.SourceID, &x.URL, &x.Title, &x.Company, &x.Description, &x.Deadline, &x.Status, &x.Location, &x.WorkMode, &x.Type, &x.Level, &x.Hours, &x.Salary, &x.Currency, &x.Closed, &x.Direction, &x.Language, &x.SalaryMin, &x.SalaryMax, &x.ApplyURL); err != nil {
+		if err := rows.Scan(&x.ID, &x.SourceID, &x.URL, &x.Title, &x.Company, &x.Description, &x.Deadline, &x.Status, &x.Location, &x.WorkMode, &x.Type, &x.Level, &x.Hours, &x.Salary, &x.Currency, &x.Closed, &x.Direction, &x.Language, &x.SalaryMin, &x.SalaryMax, &x.ApplyURL, &x.ApplicantLocations); err != nil {
 			return nil, err
 		}
 		xs = append(xs, x)

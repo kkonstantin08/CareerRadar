@@ -465,7 +465,7 @@ func TestMonitorPersistsSalaryRangeFromHTML(t *testing.T) {
 		}
 		return found, err
 	})
-	if problem, err := svc.Check(ctx, src.ID); err != nil || problem != "" {
+	if problem, err := svc.Check(ctx, src.ID); err != nil || problem != "Vacancy details require clarification" {
 		t.Fatalf("check %q %v", problem, err)
 	}
 	got, err := db.Jobs(ctx)

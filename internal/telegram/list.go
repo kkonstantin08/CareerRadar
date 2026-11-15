@@ -91,7 +91,7 @@ func (b *Bot) jobsPage(ctx context.Context, data dataStore, cursor int64) (strin
 			break
 		}
 		for _, j := range batch {
-			match := prefs.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
+			match := j.MatchPreferences(prefs)
 			if match == jobs.Unsuitable {
 				next = j.ID
 				scanned++

@@ -22,3 +22,8 @@ var JobAliases string
 //
 //go:embed 004_observation_order.sql
 var ObservationOrder string
+
+// ApplicantLocations stores explicitly assessed geography for remote jobs.
+//
+//go:embed 005_applicant_locations.sql
+var ApplicantLocations string

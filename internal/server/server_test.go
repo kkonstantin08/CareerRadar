@@ -632,6 +632,139 @@ func TestCatalogUsesPersistedSalaryRanges(t *testing.T) {
 	}
 }
 
+func TestRemoteApplicantGeographyReachesCatalogTelegramAndNotifications(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("remote_geo_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := u.Query()
+	query.Set("search_path", schema)
+	u.RawQuery = query.Encode()
+	db, err := store.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	src, err := db.AddSource(ctx, "Remote", "https://remote.example/careers", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SavePreferences(ctx, jobs.Preferences{Locations: []string{"Россия", "Москва"}}); err != nil {
+		t.Fatal(err)
+	}
+	const body = `<script type="application/ld+json">[
+      {"@type":"JobPosting","title":"Eligible remote","url":"https://remote.example/eligible","jobLocationType":"TELECOMMUTE",
+       "jobLocation":{"address":{"addressLocality":"Berlin","addressCountry":"Germany"}},
+       "applicantLocationRequirements":[{"@type":"Country","name":"Russia"},{"@type":"Country","name":"Germany"}]},
+      {"@type":"JobPosting","title":"Outside remote","url":"https://remote.example/outside","jobLocationType":"TELECOMMUTE",
+       "jobLocation":{"address":{"addressLocality":"Москва","addressCountry":"Russia"}},
+       "applicantLocationRequirements":[{"@type":"Country","name":"Germany"},{"@type":"Country","name":"Poland"}]},
+      {"@type":"JobPosting","title":"Unknown remote","url":"https://remote.example/unknown","jobLocationType":"TELECOMMUTE",
+       "jobLocation":{"address":{"addressLocality":"Berlin"}}},
+      {"@type":"JobPosting","title":"Fallback remote","url":"https://remote.example/fallback","jobLocationType":"TELECOMMUTE",
+       "jobLocation":{"address":{"addressLocality":"Екатеринбург","addressCountry":"Russia"}}},
+      {"@type":"JobPosting","title":"Partial remote","url":"https://remote.example/partial","jobLocationType":"TELECOMMUTE",
+       "jobLocation":{"address":{"addressLocality":"Berlin","addressCountry":"Germany"}},
+       "applicantLocationRequirements":[{"@type":"Country","name":"Germany"},null]}
+    ]</script>`
+	svc := monitor.New(db, func(_ context.Context, raw string) ([]collector.Job, error) {
+		return collector.Parse(strings.NewReader(body), raw)
+	})
+	h := Handler(db, "owner", "secret", svc)
+	request := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.SetBasicAuth("owner", "secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body.String())
+		}
+		return w
+	}
+	request(http.MethodPost, fmt.Sprintf("/api/sources/%d/check", src.ID))
+	var result []struct {
+		Title, Match       string
+		ApplicantLocations []string `json:"applicant_locations"`
+	}
+	if err := json.Unmarshal(request(http.MethodGet, "/api/jobs").Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]string{}
+	for _, job := range result {
+		found[job.Title] = job.Match
+		if job.Title == "Eligible remote" && strings.Join(job.ApplicantLocations, ",") != "Germany,Russia" {
+			t.Fatalf("applicant locations = %v", job.ApplicantLocations)
+		}
+	}
+	if len(found) != 4 || found["Eligible remote"] != "suitable" || found["Fallback remote"] != "suitable" || found["Unknown remote"] != "needs_clarification" || found["Partial remote"] != "needs_clarification" {
+		t.Fatalf("catalog matches = %v", found)
+	}
+	for _, place := range []string{"Россия", "Казань", "Innopolis"} {
+		result = nil
+		if err := json.Unmarshal(request(http.MethodGet, "/api/jobs?location="+url.QueryEscape(place)).Body.Bytes(), &result); err != nil || len(result) != 2 {
+			t.Fatalf("facet %q: %v err=%v", place, result, err)
+		}
+	}
+	code, err := db.NewLinkCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chatID int64 = 502
+	if err := db.LinkTelegram(ctx, code, chatID); err != nil {
+		t.Fatal(err)
+	}
+	reply := telegram.New(db).Handle(ctx, telegram.Message{ChatID: chatID, UserID: chatID, ChatType: "private", Text: "/jobs"})
+	if !strings.Contains(reply, "Eligible remote") || !strings.Contains(reply, "Unknown remote") || strings.Contains(reply, "Outside remote") {
+		t.Fatalf("Telegram catalog: %s", reply)
+	}
+	var eligible, outside int
+	if err := admin.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE message LIKE '%Eligible remote%'),count(*) FILTER (WHERE message LIKE '%Outside remote%') FROM `+schema+`.notifications`).Scan(&eligible, &outside); err != nil || eligible != 1 || outside != 0 {
+		t.Fatalf("notifications eligible=%d outside=%d err=%v", eligible, outside, err)
+	}
+	const card = "https://remote.example/eligible"
+	var id int64
+	if err := admin.QueryRowContext(ctx, `SELECT id FROM `+schema+`.jobs WHERE url=$1`, card).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		mode         string
+		areas        []string
+		wantAreas    string
+		wantMatch    jobs.Match
+		wantRevision int
+	}{
+		{"remote", []string{}, "Germany,Russia", jobs.Suitable, 1},
+		{"remote", []string{"Germany"}, "Germany", jobs.Unsuitable, 2},
+		{"office", nil, "", jobs.NeedsClarification, 3},
+	} {
+		if _, err := db.Observe(ctx, store.Observation{SourceID: src.ID, URL: card, WorkMode: step.mode, ApplicantLocations: step.areas}); err != nil {
+			t.Fatal(err)
+		}
+		var detail store.JobDetails
+		if err := json.Unmarshal(request(http.MethodGet, fmt.Sprintf("/api/jobs/%d", id)).Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(detail.Job.ApplicantLocations, ",") != step.wantAreas || detail.Job.MatchPreferences(jobs.Preferences{Locations: []string{"Россия", "Москва"}}) != step.wantMatch || len(detail.History) != step.wantRevision {
+			t.Fatalf("mode=%s got=%+v", step.mode, detail)
+		}
+	}
+}
+
 func TestCheckHistoryVisibleInAPI(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

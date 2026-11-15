@@ -29,3 +29,10 @@ Each slice begins with a failing behavioral test and ends with focused verificat
 1. Reproduce the inability to distinguish open, closed and uncertain registration on the official X5 internship page. Use the exact unredirected URL, the program section and the application CTA. Test a hidden or unrelated CTA, redirects and HTTP failures.
 2. Wire closure and reopening into the existing transactional store. Verify duplicate-free history and notifications, retained observations and application status, uncertainty handling, and preservation of owner closures.
 3. Confirm the public closed state through the real collector and an isolated PostgreSQL check. Run the full race suite, vet, build and GPT-6 Luna (High) review.
+
+## Remote geography
+
+1. Reproduce a remote post with a physical office in another country and explicit eligibility for Russia among several countries. Check the catalog, Telegram and notification paths. Add negative cases for an explicitly disjoint list, missing eligibility and malformed alternatives.
+2. Parse explicit applicant areas from JobPosting JSON-LD and Microdata through their shared path. Use explicit office countries only when the applicant property is absent, following the documented structured-data convention. Keep malformed or incomplete coverage uncertain and preserve observed labels in the description.
+3. Persist the eligibility list with an additive PostgreSQL migration and apply it in shared matching and the catalog facet. Preserve legacy facts for other sources, newer observations and previously confirmed eligibility on incomplete checks. Document the additive REST field.
+4. Run source smoke checks, PostgreSQL-backed race tests, vet, build and independent GPT-6 Luna (High) review.

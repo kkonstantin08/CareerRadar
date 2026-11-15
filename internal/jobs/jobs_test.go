@@ -84,6 +84,22 @@ func TestRussianCountryAloneOnlyConfirmsRemoteEligibility(t *testing.T) {
 	}
 }
 
+func TestPublishedRussianRemoteEligibilityIncludesKazanAndInnopolis(t *testing.T) {
+	for _, city := range []string{"Kazan", "Иннополис"} {
+		p := Preferences{Locations: []string{city}}
+		for _, mode := range []string{"remote", "office"} {
+			job := Job{Location: "Россия", WorkMode: mode, ApplicantLocations: []string{"RU"}}
+			want := Suitable
+			if mode == "office" {
+				want = NeedsClarification
+			}
+			if got := p.Match(job); got != want {
+				t.Errorf("%s / %s got %s, want %s", city, mode, got, want)
+			}
+		}
+	}
+}
+
 func TestCountryPreferenceMatchesCountryOnlyOfficeLocation(t *testing.T) {
 	p := Preferences{Locations: []string{"Россия"}}
 	if got := p.Match(Job{Location: "Russia", WorkMode: "office"}); got != Suitable {

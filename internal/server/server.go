@@ -358,7 +358,7 @@ func Handler(db *store.Store, username, password string, checks *monitor.Service
 				break
 			}
 			for _, j := range xs {
-				match := p.Match(jobs.Job{Company: j.Company, Location: j.Location, WorkMode: j.WorkMode, Type: j.Type, Level: j.Level, Direction: j.Direction, Language: j.Language, Hours: j.Hours, Salary: j.Salary, SalaryMin: j.SalaryMin, SalaryMax: j.SalaryMax, Currency: j.Currency})
+				match := j.MatchPreferences(p)
 				if match != jobs.Unsuitable {
 					if len(result) == filter.Limit {
 						hasMore = true

@@ -48,7 +48,7 @@ func (s *Store) SaveDiscovered(ctx context.Context, results []discovery.Result) 
 		x := Observation{SourceID: src.ID, PageURL: r.URL, URL: discovery.VacancyURL(r.URL), Title: r.Title, Company: r.Company, Location: r.Location, Description: r.Description, WorkMode: r.WorkMode, Type: offerType, Level: level, createOnly: true}
 		if d := r.Details; d != nil {
 			fallback := x
-			x = Observation{SourceID: src.ID, PageURL: d.SourceURL, URL: discovery.VacancyURL(r.URL), Title: d.Title, Company: d.Company, Description: d.Description, Deadline: d.Deadline, Location: d.Location, LocationUncertain: d.LocationUncertain, WorkMode: d.WorkMode, Type: d.Type, Level: d.Level, Direction: d.Direction, Language: d.Language, Hours: d.Hours, Salary: d.Salary, SalaryMin: d.SalaryMin, SalaryMax: d.SalaryMax, Currency: d.Currency, ApplyURL: d.ApplyURL}
+			x = Observation{SourceID: src.ID, PageURL: d.SourceURL, URL: discovery.VacancyURL(r.URL), Title: d.Title, Company: d.Company, Description: d.Description, Deadline: d.Deadline, Location: d.Location, LocationUncertain: d.LocationUncertain, ApplicantLocations: d.ApplicantLocations, WorkMode: d.WorkMode, Type: d.Type, Level: d.Level, Direction: d.Direction, Language: d.Language, Hours: d.Hours, Salary: d.Salary, SalaryMin: d.SalaryMin, SalaryMax: d.SalaryMax, Currency: d.Currency, ApplyURL: d.ApplyURL}
 			x.initialFallback = &fallback
 		}
 		_, err = s.Observe(ctx, x)

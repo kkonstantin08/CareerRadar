@@ -89,8 +89,11 @@ func TestSearchEnrichesMatchingCardsAndRetainsUnavailableRSS(t *testing.T) {
 			t.Fatalf("status=%d results=%+v err=%v", status, got, err)
 		}
 		if status == 200 {
-			if got[0].Details == nil || got[0].Details.Currency != "RUB" || got[0].Details.SalaryMin == nil || *got[0].Details.SalaryMin != 75000 || got[0].Location != "Казань" || got[0].Problem != "" {
+			if got[0].Details == nil || got[0].Details.Currency != "RUB" || got[0].Details.SalaryMin == nil || *got[0].Details.SalaryMin != 75000 || got[0].Location != "Казань" {
 				t.Fatalf("missing details: %+v", got[0])
+			}
+			if got[0].Details.ApplicantLocations == nil || len(got[0].Details.ApplicantLocations) != 0 || got[0].Problem != "Карточка содержит неполные или неоднозначные сведения" {
+				t.Fatalf("remote eligibility was not flagged: %+v", got[0])
 			}
 		} else if got[0].Details != nil || got[0].Problem == "" || got[0].Company != "RSS Company" || got[0].WorkMode != "remote" {
 			t.Fatalf("RSS facts lost on error: %+v", got[0])

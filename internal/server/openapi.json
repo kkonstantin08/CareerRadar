@@ -42,6 +42,12 @@
           "location": {
             "type": "string"
           },
+          "applicant_locations": {
+            "type": "array",
+            "nullable": true,
+            "items": {"type":"string"},
+            "description": "Published locations eligible for remote work. An empty array means coverage needs clarification. Null means no structured remote eligibility was assessed."
+          },
           "work_mode": {
             "type": "string"
           },
@@ -343,7 +349,7 @@
           {"in":"query","name":"direction","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
           {"in":"query","name":"language","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
           {"in":"query","name":"company","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
-          {"in":"query","name":"location","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
+          {"in":"query","name":"location","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true,"description":"Match published applicant regions for remote jobs or the recorded location when no eligibility was assessed."},
           {"in":"query","name":"type","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
           {"in":"query","name":"work_mode","schema":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":100}},"style":"form","explode":true},
           {"in":"query","name":"limit","schema":{"type":"integer","minimum":1,"maximum":100,"default":50},"description":"Page size"},

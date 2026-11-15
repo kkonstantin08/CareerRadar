@@ -17,26 +17,27 @@ import (
 
 // Job is a structured opportunity and the page on which it was observed.
 type Job struct {
-	Closed            bool
-	Title             string
-	Company           string
-	Description       string
-	Deadline          string
-	URL               string
-	ApplyURL          string
-	SourceURL         string
-	Location          string
-	LocationUncertain bool
-	WorkMode          string
-	Type              string
-	Level             string
-	Direction         string
-	Language          string
-	Hours             *int
-	Salary            *int64
-	SalaryMin         *int64
-	SalaryMax         *int64
-	Currency          string
+	Closed             bool
+	Title              string
+	Company            string
+	Description        string
+	Deadline           string
+	URL                string
+	ApplyURL           string
+	SourceURL          string
+	Location           string
+	LocationUncertain  bool
+	ApplicantLocations []string
+	WorkMode           string
+	Type               string
+	Level              string
+	Direction          string
+	Language           string
+	Hours              *int
+	Salary             *int64
+	SalaryMin          *int64
+	SalaryMax          *int64
+	Currency           string
 }
 
 var weeklyHours = regexp.MustCompile(`(?i)^\s*(\d{1,3})\s*(?:hours? per week|hours? a week|час(?:ов|а)? в неделю)\s*$`)
@@ -111,15 +112,12 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			if len(locations) == 1 && !locationUncertain {
 				location = locations[0]
 			}
-			if strings.EqualFold(str("jobLocationType"), "TELECOMMUTE") {
+			var applicantLocations, observedAreas []string
+			if posting && !program && jobPostingRemote(v, places) {
 				mode = "remote"
-				areas := schemaObjects(v["applicantLocationRequirements"])
-				if len(areas) == 1 && schemaTypeContains(areas[0]["@type"], "Country") {
-					area := areas[0]
-					if country := schemaText(area["name"]); country != "" {
-						location = country
-						locationUncertain = false
-					}
+				applicantLocations, observedAreas = remoteApplicantLocations(v)
+				if _, explicit := v["applicantLocationRequirements"]; explicit && len(applicantLocations) == 1 {
+					location, locationUncertain = applicantLocations[0], false
 				}
 			}
 			title := str("title")
@@ -135,6 +133,9 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 				if !strings.Contains(description, label) {
 					description = strings.TrimSpace(description + "\n\n" + label)
 				}
+			}
+			if len(observedAreas) > 0 && len(applicantLocations) == 0 {
+				description = strings.TrimSpace(description + "\n\nРегионы с неполными сведениями: " + strings.Join(observedAreas, "; "))
 			}
 			if program {
 				title = str("name")
@@ -236,7 +237,7 @@ func Parse(r io.Reader, sourceURL string) ([]Job, error) {
 			}
 			sort.Strings(languages)
 			language := strings.Join(languages, ", ")
-			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, LocationUncertain: locationUncertain, WorkMode: mode, Title: title, Company: company, Description: description, Deadline: deadline, URL: str("url"), SourceURL: sourceURL})
+			result = append(result, Job{Direction: direction, Language: language, Hours: hours, Salary: salary, SalaryMin: salaryMin, SalaryMax: salaryMax, Currency: currency, Type: offerType, Level: level, Location: location, LocationUncertain: locationUncertain, ApplicantLocations: applicantLocations, WorkMode: mode, Title: title, Company: company, Description: description, Deadline: deadline, URL: str("url"), SourceURL: sourceURL})
 		}
 	}
 	var walk func(*html.Node)
@@ -336,13 +337,24 @@ func microdataItem(n *html.Node, byID map[string]*html.Node, treeOrder map[*html
 		path[item] = true
 	}
 	path[n] = true
-	var typeName string
+	var typeName any
+	var nestedTypes []any
 	for _, raw := range strings.Fields(attribute(n, "itemtype")) {
 		name := schemaTypeName(raw)
+		if name == "" {
+			continue
+		}
+		if parentPath != nil {
+			nestedTypes = append(nestedTypes, name)
+			continue
+		}
 		if name == "JobPosting" || name == "EducationalOccupationalProgram" {
 			typeName = name
 			break
 		}
+	}
+	if len(nestedTypes) > 0 {
+		typeName = nestedTypes
 	}
 	item := map[string]any{"@type": typeName}
 	type propertyValue struct {

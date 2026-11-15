@@ -246,6 +246,33 @@ func TestParseRemoteApplicantCountry(t *testing.T) {
 	}
 }
 
+func TestMicrodataRemoteApplicantAreas(t *testing.T) {
+	const body = `<article itemscope itemtype="https://schema.org/JobPosting">
+  <h1 itemprop="title">Remote Engineer</h1><meta itemprop="jobLocationType" content="TELECOMMUTE">
+  <div itemprop="applicantLocationRequirements" itemscope itemtype="https://schema.org/State"><span itemprop="name">Texas, USA</span></div>
+  <div itemprop="applicantLocationRequirements" itemscope itemtype="https://schema.org/State"><span itemprop="name">Michigan, USA</span></div>
+</article>`
+	got, err := Parse(strings.NewReader(body), "https://example.org/job")
+	if err != nil || len(got) != 1 || strings.Join(got[0].ApplicantLocations, ";") != "Michigan, USA;Texas, USA" || got[0].WorkMode != "remote" {
+		t.Fatalf("jobs=%+v err=%v", got, err)
+	}
+}
+
+func TestLegacyTelecommutePropertyRequiresAnExplicitTrueValue(t *testing.T) {
+	for _, tc := range []struct {
+		value  string
+		remote bool
+	}{{"true", true}, {"false", false}, {`"yes"`, false}, {`"true"`, true}} {
+		body := `<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","jobLocation":` +
+			`{"@type":"Place","address":{"addressLocality":"Kazan","addressCountry":"RU"},` +
+			`"additionalProperty":{"@type":"PropertyValue","name":"TELECOMMUTE","value":` + tc.value + `}}}</script>`
+		got, err := Parse(strings.NewReader(body), "https://example.org/job")
+		if err != nil || len(got) != 1 || (got[0].WorkMode == "remote") != tc.remote || tc.remote && strings.Join(got[0].ApplicantLocations, ",") != "RU" {
+			t.Errorf("value=%s jobs=%+v err=%v", tc.value, got, err)
+		}
+	}
+}
+
 func TestParseTypedCountryLocations(t *testing.T) {
 	for _, fields := range []string{
 		`"jobLocation":{"address":{"addressCountry":{"@type":"https://schema.org/Country","name":"Russia"}}}`,

@@ -253,7 +253,7 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 			}
 			continue
 		}
-		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "" || job.LocationUncertain) {
+		if problem == "" && (job.Title == "" || job.Company == "" || job.Deadline == "" || job.LocationUncertain || job.ApplicantLocations != nil && len(job.ApplicantLocations) == 0) {
 			problem = "Vacancy details require clarification"
 		}
 		if evidence := collector.HabrArchiveEvidenceURL(src.URL); evidence != "" && evidence == collector.HabrArchiveEvidenceURL(job.URL) && job.SourceURL == evidence && fetchErr == nil {
@@ -293,7 +293,7 @@ func (s *Service) Check(ctx context.Context, id int64) (string, error) {
 			problem = "Job URL is missing or invalid"
 			continue
 		}
-		_, err = s.db.Observe(ctx, store.Observation{SourceID: src.ID, CheckOrder: order, PageURL: job.SourceURL, URL: jobURL, ApplyURL: job.ApplyURL, Title: job.Title, Company: job.Company, Description: job.Description, Deadline: job.Deadline, Location: job.Location, LocationUncertain: job.LocationUncertain, WorkMode: job.WorkMode, Type: job.Type, Level: job.Level, Direction: job.Direction, Language: job.Language, Hours: job.Hours, Salary: job.Salary, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax, Currency: job.Currency})
+		_, err = s.db.Observe(ctx, store.Observation{SourceID: src.ID, CheckOrder: order, PageURL: job.SourceURL, URL: jobURL, ApplyURL: job.ApplyURL, Title: job.Title, Company: job.Company, Description: job.Description, Deadline: job.Deadline, Location: job.Location, LocationUncertain: job.LocationUncertain, ApplicantLocations: job.ApplicantLocations, WorkMode: job.WorkMode, Type: job.Type, Level: job.Level, Direction: job.Direction, Language: job.Language, Hours: job.Hours, Salary: job.Salary, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax, Currency: job.Currency})
 		if err != nil {
 			if errors.Is(err, store.ErrDuplicateJobicy) || errors.Is(err, store.ErrAmbiguousJobIdentity) || errors.Is(err, store.ErrStaleObservation) {
 				problem = err.Error()

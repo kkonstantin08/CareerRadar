@@ -1,22 +1,26 @@
 // Package jobs contains opportunity matching rules.
 package jobs
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Job contains facts confirmed by an opportunity's source.
 type Job struct {
-	Level     string
-	Direction string
-	Location  string
-	Type      string
-	Language  string
-	Company   string
-	WorkMode  string
-	Hours     *int
-	Salary    *int64
-	SalaryMin *int64
-	SalaryMax *int64
-	Currency  string
+	Level              string
+	Direction          string
+	Location           string
+	ApplicantLocations []string
+	Type               string
+	Language           string
+	Company            string
+	WorkMode           string
+	Hours              *int
+	Salary             *int64
+	SalaryMin          *int64
+	SalaryMax          *int64
+	Currency           string
 }
 
 // Preferences restrict explicitly known opportunity attributes.
@@ -52,6 +56,15 @@ func (p Preferences) Match(j Job) Match {
 		locations[i] = normalizeLocation(value)
 	}
 	location = normalizeLocation(location)
+	if j.WorkMode == "remote" && j.ApplicantLocations != nil && len(locations) > 0 {
+		switch matchApplicantLocations(j.ApplicantLocations, locations) {
+		case Unsuitable:
+			return Unsuitable
+		case NeedsClarification:
+			unknown = true
+		}
+		locations = nil
+	}
 	// Broad remote regions do not establish eligibility for a specific country.
 	if len(p.Locations) > 0 && (strings.EqualFold(strings.TrimSpace(location), "worldwide") || strings.EqualFold(strings.TrimSpace(location), "anywhere")) {
 		location = ""
@@ -142,15 +155,52 @@ func (p Preferences) Match(j Job) Match {
 	return Suitable
 }
 
-func normalizeLocation(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "russia", "russian federation", "ru", "рф", "россия", "российская федерация":
-		return "россия"
-	case "kazan", "казань":
-		return "казань"
-	case "innopolis", "иннополис":
-		return "иннополис"
-	default:
-		return strings.TrimSpace(value)
+func matchApplicantLocations(actual, allowed []string) Match {
+	unknown := len(actual) == 0
+	for _, candidate := range actual {
+		candidate = normalizeLocation(candidate)
+		if candidate == "" || strings.EqualFold(candidate, "worldwide") || strings.EqualFold(candidate, "anywhere") {
+			unknown = true
+			continue
+		}
+		for _, location := range allowed {
+			if slices.Contains(ApplicantLocationAliases(location), candidate) {
+				return Suitable
+			}
+		}
 	}
+	if unknown {
+		return NeedsClarification
+	}
+	return Unsuitable
+}
+
+func normalizeLocation(value string) string {
+	return LocationAliases(value)[0]
+}
+
+// LocationAliases returns the normalized spellings used by matching and the catalog facet.
+func LocationAliases(value string) []string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, spellings := range [][]string{
+		{"россия", "russia", "russian federation", "ru", "рф", "российская федерация"},
+		{"казань", "kazan"},
+		{"иннополис", "innopolis"},
+	} {
+		for _, spelling := range spellings {
+			if value == spelling {
+				return spellings
+			}
+		}
+	}
+	return []string{value}
+}
+
+// ApplicantLocationAliases includes nationwide eligibility for the configured Russian cities.
+func ApplicantLocationAliases(value string) []string {
+	aliases := LocationAliases(value)
+	if aliases[0] == "казань" || aliases[0] == "иннополис" {
+		return slices.Concat(aliases, LocationAliases("россия"))
+	}
+	return aliases
 }

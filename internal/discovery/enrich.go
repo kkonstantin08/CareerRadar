@@ -44,7 +44,7 @@ func enrichCards(ctx context.Context, client *http.Client, results []Result) {
 				if found[0].WorkMode != "" {
 					r.WorkMode = found[0].WorkMode
 				}
-				if r.Problem == "" && (found[0].LocationUncertain || found[0].Title == "" || found[0].Company == "" || found[0].Deadline == "") {
+				if r.Problem == "" && (found[0].LocationUncertain || found[0].ApplicantLocations != nil && len(found[0].ApplicantLocations) == 0 || found[0].Title == "" || found[0].Company == "" || found[0].Deadline == "") {
 					r.Problem = "Карточка содержит неполные или неоднозначные сведения"
 				}
 			}
